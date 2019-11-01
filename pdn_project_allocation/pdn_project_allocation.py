@@ -201,7 +201,8 @@ class Student(object):
         preferences = ", ".join(parts)
         return (
             f"{self.name} (S#{self.number}): {{{preferences}}} "
-            f"(unranked dissatisfaction: {self.unranked_dissatisfaction})"
+            f"(dissatisfaction with unranked projects: "
+            f"{self.unranked_dissatisfaction})"
         )
 
     def shortname(self) -> str:
@@ -329,14 +330,14 @@ class Solution(object):
         """
         return mean(self.dissatisfaction_scores())
 
-    def dissatisfaction_exponentiated_mean(self, power: float) -> float:
-        """
-        Mean of dissatisfaction scores raised to a power.
-
-        No longer used.
-        """
-        exp_scores = [s ** power for s in self.dissatisfaction_scores()]
-        return mean(exp_scores)
+    # def dissatisfaction_exponentiated_mean(self, power: float) -> float:
+    #     """
+    #     Mean of dissatisfaction scores raised to a power.
+    #
+    #     No longer used.
+    #     """
+    #     exp_scores = [s ** power for s in self.dissatisfaction_scores()]
+    #     return mean(exp_scores)
 
     def dissatisfaction_variance(self) -> float:
         """
@@ -565,30 +566,32 @@ class Problem(object):
         n_students = len(self.students)
         n_projects = len(self.projects)
         # Student dissatisfaction scores for each project
+        # CAUTION: get indexes the right way round!
         dissatisfaction = [
             [
                 self.students[s].dissatisfaction(self.projects[p].number)
-                for s in range(n_students)
+                for p in range(n_projects)  # second index
             ]
-            for p in range(n_projects)
+            for s in range(n_students)  # first index
         ]
 
         # Model
         m = Model("Student project allocation")
+        # CAUTION: get indexes the right way round!
         # Binary variables to optimize, each linking a student to a project
         x = [
             [
                 m.add_var(varname(s, p), var_type=BINARY)
-                for s in range(n_students)
+                for p in range(n_projects)  # second index
             ]
-            for p in range(n_projects)
+            for s in range(n_students)  # first index
         ]
 
         # Objective: happy students
         m.objective = minimize(xsum(
             dissatisfaction[s][p] * x[s][p]
-            for s in range(n_students)
             for p in range(n_projects)
+            for s in range(n_students)
         ))
 
         # Constraints
@@ -605,12 +608,16 @@ class Problem(object):
         # Extract results
         if not m.num_solutions:
             return None
-        # self._debug_model_vars(m)
+        # for s in range(n_students):
+        #     for p in range(n_projects):
+        #         log.debug(f"x[{s}][{p}].x = {x[s][p].x}")
+        self._debug_model_vars(m)
         project_indexes = [
             next(p for p in range(n_projects)
                  # if m.var_by_name(varname(s, p)).x >= ALMOST_ONE)
                  if x[s][p].x >= ALMOST_ONE)
             # ... note that the value of a solved variable is var.x
+            # If those two expressions are not the same, there's a bug.
             for s in range(n_students)
         ]
         return self._make_solution(project_indexes)
@@ -620,8 +627,10 @@ class Problem(object):
         """
         Show the names/values of model variables after fitting.
         """
+        lines = [f"Variables in model {m.name!r}:"]
         for v in m.vars:
-            log.debug(f"{v.name} == {v.x}")
+            lines.append(f"{v.name} == {v.x}")
+        log.debug("\n".join(lines))
 
 
 # =============================================================================
@@ -644,6 +653,7 @@ def read_data_csv(filename: str) -> Problem:
     """
     projects = []  # type: List[Project]
     students = []  # type: List[Student]
+    log.info(f"Reading file: {filename}")
     with open(filename, "rt") as f:
         reader = csv.reader(f)
 
