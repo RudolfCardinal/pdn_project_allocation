@@ -1,6 +1,8 @@
 #!/usr/bin/env python
 
 """
+pdn_project_allocation/run_tests.py
+
 Run tests for pdn_project_allocation.
 """
 
@@ -9,15 +11,13 @@ import os
 import subprocess
 
 from cardinal_pythonlib.logs import main_only_quicksetup_rootlogger
-from cardinal_pythonlib.fileops import mkdir_p
 
 log = logging.getLogger(__name__)
 
 THISDIR = os.path.dirname(os.path.realpath(__file__))
-PROG = os.path.join(THISDIR, "pdn_project_allocation",
-                    "pdn_project_allocation.py")
+PROG = os.path.join(THISDIR, "pdn_project_allocation.py")
 INPUTDIR = os.path.join(THISDIR, "testdata")
-OUTPUTDIR = os.path.join(THISDIR, "testoutput")
+OUTPUTDIR = os.getcwd()
 
 
 def process(infile: str, outfile: str) -> None:
@@ -33,7 +33,6 @@ def process(infile: str, outfile: str) -> None:
 
 
 def main() -> None:
-    mkdir_p(OUTPUTDIR)
     process("test1_equal_preferences_check_output_consistency.csv", "out1.csv")
     process("test2_trivial_perfect.csv", "out2.csv")
     process("test3_n60_two_equal_solutions.csv", "out3.csv")

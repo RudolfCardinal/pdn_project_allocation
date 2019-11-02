@@ -21,7 +21,7 @@ Installation
 
   .. code-block:: bash
 
-    pip install https://github.com/RudolfCardinal/pdn_project_allocation
+    pip install git+https://github.com/RudolfCardinal/pdn_project_allocation
 
 - You should now be able to run the program. Try:
 

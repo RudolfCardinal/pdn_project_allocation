@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
 """
+pdn_project_allocation/pdn_project_allocation.py
 
 See README.rst
 
