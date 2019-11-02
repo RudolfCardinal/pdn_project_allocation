@@ -9,6 +9,7 @@ import os
 import subprocess
 
 from cardinal_pythonlib.logs import main_only_quicksetup_rootlogger
+from cardinal_pythonlib.fileops import mkdir_p
 
 log = logging.getLogger(__name__)
 
@@ -32,6 +33,7 @@ def process(infile: str, outfile: str) -> None:
 
 
 def main() -> None:
+    mkdir_p(OUTPUTDIR)
     process("test1_equal_preferences_check_output_consistency.csv", "out1.csv")
     process("test2_trivial_perfect.csv", "out2.csv")
     process("test3_n60_two_equal_solutions.csv", "out3.csv")
