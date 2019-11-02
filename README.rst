@@ -23,11 +23,21 @@ Installation
 
     pip install git+https://github.com/RudolfCardinal/pdn_project_allocation
 
-- You should now be able to run the program. Try:
+You should now be able to run the program. Try:
 
-  .. code-block:: bash
+.. code-block:: bash
 
     pdn_project_allocation --help
+
+To run some automated tests, change into a directory where you're happy to
+stash some output files and run
+
+.. code-block:: bash
+
+    pdn_project_allocation_run_tests
+
+This produces solutions to match the test data in the
+``pdn_project_allocation/testdata`` directory.
 
 
 Description
