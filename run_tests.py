@@ -37,6 +37,7 @@ def main() -> None:
     process("test3_n60_two_equal_solutions.csv", "out3.csv")
     process("test4_n10_multiple_ties.csv", "out4.csv")
     process("test5_mean_vs_variance.csv", "out5.csv")
+    process("test6_excel.xlsx", "out6.xlsx")
 
 
 if __name__ == "__main__":

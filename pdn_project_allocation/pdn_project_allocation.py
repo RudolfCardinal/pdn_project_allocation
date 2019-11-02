@@ -12,21 +12,29 @@ Description:
 - There are a number of projects p, and a number of students s, such that
   p >= s. One student per project (if a project can take >1 student, that
   project gets entered as two projects!).
+
 - Projects are represented by integers from 1...p.
+
 - Students rank projects from 1 (most preferred) upwards, as integers.
+
 - In original task specification, they could rank up to 5 projects, but no
   reason not to extend that. (Indifference between any projects not ranked.)
+
 - If they don't rank enough, they are treated as being indifferent between
   them (meaning that the program will maximize everyone else's satisfaction
   without regard to them).
-- Output must be consistent across runs, and consistent against re-ordering of
-  students in the input data. There will be random tiebreaks, e.g. in the case
-  of two projects with both students ranking the first project top; consistency
-  is important and lack of bias is unimportant, so we set a random number seed
-  to a fixed value and then allocate randomly. (No such effort is applied to
-  project ordering.)
 
-Slightly tricky question 1: optimizing mean versus variance.
+- Output must be consistent across runs, and consistent against re-ordering of
+  students in the input data. There will be a need to break ties randomly, e.g.
+  in the case of two projects with both students ranking the first project top.
+  Consistency is important and lack of bias (e.g. alphabetical bias) is
+  important, so we (a) set a consistent random number seed; (b)
+  deterministically and then randomly sort the students; (c) run the optimizer.
+  This gives consistent results and does not depend on e.g. alphabetical
+  ordering, who comes first in the spreadsheet, etc. (No such effort is applied
+  to project ordering.)
+
+Slightly tricky question: optimizing mean versus variance.
 
 - Dissatisfaction mean: lower is better, all else being equal.
 - Dissatisfaction variance: lower is better, all else being equal.
@@ -41,7 +49,8 @@ Slightly tricky question 1: optimizing mean versus variance.
 - The choice depends whether greater equality can outweight slightly worse
   mean (dis)satisfaction.
 
-  - CURRENTLY EXPERIMENTING WITH test4*.csv -- NOT ACHIEVED YET!
+  - CURRENTLY EXPERIMENTING WITH test4*.csv -- NOT ACHIEVED YET! Optimizing
+    mean happiness seems to be fine.
 
 Changelog:
 
@@ -61,6 +70,10 @@ Changelog:
     worse mean and a better variance.
   - Experimented with power (exponent); not much gain and adds complexity.
 
+- 2019-11-02:
+
+  - Excel XLSX input/output, in addition to CSV.
+
 """
 
 import argparse
@@ -69,11 +82,15 @@ from enum import Enum
 import itertools
 import logging
 from math import factorial, inf
+import os
 import random
 from statistics import mean, variance
-from typing import Dict, Generator, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Generator, List, Optional, Sequence, Tuple
 
 from cardinal_pythonlib.logs import main_only_quicksetup_rootlogger
+from openpyxl.cell import Cell
+from openpyxl.reader.excel import load_workbook
+from openpyxl.workbook.workbook import Workbook
 from mip import BINARY, minimize, Model, xsum
 
 log = logging.getLogger(__name__)
@@ -201,8 +218,7 @@ class Student(object):
         preferences = ", ".join(parts)
         return (
             f"{self.name} (S#{self.number}): {{{preferences}}} "
-            f"(dissatisfaction with unranked projects: "
-            f"{self.unranked_dissatisfaction})"
+            f"(other projects scored: {self.unranked_dissatisfaction})"
         )
 
     def shortname(self) -> str:
@@ -370,6 +386,15 @@ class Solution(object):
         """
         return score[0] <= 0
 
+    @staticmethod
+    def _output_titles() -> List[str]:
+        return [
+            "Student name",
+            "Project number",
+            "Project name",
+            "Student's rank of (dissatisfaction with) allocated project"
+        ]
+
     def write_csv(self, filename: str) -> None:
         """
         Writes the solution to a CSV file.
@@ -377,12 +402,7 @@ class Solution(object):
         log.info(f"Writing to: {filename}")
         with open(filename, "wt") as f:
             writer = csv.writer(f)
-            writer.writerow([
-                "Student name",
-                "Project number",
-                "Project name",
-                "Student dissatisfaction with project"
-            ])
+            writer.writerow(self._output_titles())
             for student, project in self._gen_student_project_pairs():
                 writer.writerow([
                     student.name,
@@ -390,6 +410,38 @@ class Solution(object):
                     project.name,
                     student.dissatisfaction(project.number)
                 ])
+
+    def write_xlsx(self, filename: str) -> None:
+        """
+        Writes the solution to an Excel XLSX file.
+        """
+        wb = Workbook()
+        ws = wb.active  # we only care about the first sheet
+        ws.title = "Project_allocations"
+        for col, text in enumerate(self._output_titles(), start=1):
+            ws.cell(row=1, column=col).value = text
+        for row, (student, project) in enumerate(
+                self._gen_student_project_pairs(), start=2):
+            ws.cell(row=row, column=1).value = student.name
+            ws.cell(row=row, column=2).value = project.number
+            ws.cell(row=row, column=3).value = project.name
+            ws.cell(row=row, column=4).value = student.dissatisfaction(project.number)  # noqa
+        wb.save(filename)
+
+    def write_data(self, filename: str) -> None:
+        """
+        Autodetects the file type from the extension and writes data to that
+        file.
+        """
+        # File type?
+        _, ext = os.path.splitext(filename)
+        if ext == ".xlsx":
+            self.write_xlsx(filename)
+        elif ext == ".csv":
+            self.write_csv(filename)
+        else:
+            raise ValueError(
+                f"Don't know how to write file type {ext!r} for {filename!r}")
 
 
 # =============================================================================
@@ -637,11 +689,12 @@ class Problem(object):
 # Read data in
 # =============================================================================
 
-def read_data_csv(filename: str) -> Problem:
+def gen_from_spreadsheet(rowgen: Generator[Any, None, None]) \
+        -> Generator[Any, None, None]:
     """
-    Reads data from a CSV file, giving the problem.
+    From a spreadsheet row generator, provide data for :func:`read_data`.
 
-    Format is:
+    The spreadsheet format is:
 
     .. code-block:: none
 
@@ -651,42 +704,106 @@ def read_data_csv(filename: str) -> Problem:
         ...
 
     """
-    projects = []  # type: List[Project]
-    students = []  # type: List[Student]
-    log.info(f"Reading file: {filename}")
+    # Projects
+    firstrow = next(rowgen)
+    if len(firstrow) < 2:
+        raise ValueError("Bad project row")
+    yield firstrow[1:]  # project names
+
+    # Students and preferences
+    for student_number, row in enumerate(rowgen, start=1):
+        if len(row) < 2:
+            raise ValueError("Bad student row")
+        student_name = row[0]
+        rank_strings = row[1:]
+        yield student_number, student_name, rank_strings
+
+
+def gen_data_csv(filename: str) -> Generator[Any, None, None]:
+    """
+    Reads data from a CSV file and generates it in the format required by
+    :func:`read_data`.
+    """
+    log.info(f"Reading CSV file: {filename}")
     with open(filename, "rt") as f:
         reader = csv.reader(f)
+        yield from gen_from_spreadsheet(reader)
 
-        # First row: read projects
-        firstrow = next(reader)
-        n_projects = len(firstrow) - 1
-        log.info(f"Number of projects: {n_projects}")
-        assert n_projects >= 1
-        for pn in range(1, n_projects + 1):
-            projects.append(Project(name=firstrow[pn], number=pn))
 
-        # Other rows: students and preferences
-        for student_number, row in enumerate(reader, start=1):
-            student_name = row[0]
-            prefs = {}  # type: Dict[int, int]
-            for pn in range(1, n_projects + 1):
-                rank_str = row[pn]
-                if rank_str:
-                    try:
-                        dissatisfaction_score = int(rank_str)
-                        if not ONE_BASED_DISSATISFACTION_SCORES:
-                            dissatisfaction_score = dissatisfaction_score - 1
-                        prefs[pn] = dissatisfaction_score
-                    except (ValueError, TypeError):
-                        raise ValueError(f"Bad preference: {rank_str!r}")
-            students.append(Student(name=student_name,
-                                    number=student_number,
-                                    preferences=prefs,
-                                    n_projects=n_projects))
+def gen_data_xlsx(filename: str) -> Generator[Any, None, None]:
+    """
+    Reads data from an Excel (XLSX) file and generates it in the format
+    required by :func:`read_data`.
 
+    The XLSX file format is the same as the CSV file format.
+    Only the first sheet in the workbook is considered.
+    """
+    def gen_row_values(rowgen: Generator[Sequence[Cell], None, None]) \
+            -> Generator[List[str], None, None]:
+        for row in rowgen:
+            yield [cell.value for cell in row]
+
+    log.info(f"Reading XLSX file: {filename}")
+    wb = load_workbook(filename, read_only=True)
+    ws = wb.active
+    # ... the active sheet is always the first to begin with
+    gen_row_cells = ws.iter_rows()
+
+    yield from gen_from_spreadsheet(gen_row_values(gen_row_cells))
+
+
+def read_data(filename: str) -> Problem:
+    """
+    Reads a file, autodetecting its format, and returning the :class:`Problem`.
+    """
+    # File type?
+    _, ext = os.path.splitext(filename)
+    if ext == ".xlsx":
+        generator = gen_data_xlsx(filename)
+    elif ext == ".csv":
+        generator = gen_data_csv(filename)
+    else:
+        raise ValueError(
+            f"Don't know how to read file type {ext!r} for {filename!r}")
+
+    # Generate and read data
+    projects = []  # type: List[Project]
+    students = []  # type: List[Student]
+
+    # 1. Projects
+    project_names = next(generator)
+    n_projects = len(project_names)
+    log.info(f"Number of projects: {n_projects}")
+    assert n_projects >= 1
+    for pnumber, pname in enumerate(project_names, start=1):
+        projects.append(Project(name=pname, number=pnumber))
+
+    # 2. Students
+    for student_number, student_name, rank_strings in generator:
+        if len(rank_strings) != n_projects:
+            raise ValueError(
+                f"Student #{student_number} ({student_name} has a row with "
+                f"{len(rank_strings)} preferences but we expect {n_projects}, "
+                f"the number of projects")
+        prefs = {}  # type: Dict[int, int]
+        for pn, rank_str in enumerate(rank_strings, start=1):
+            if rank_str:
+                try:
+                    dissatisfaction_score = int(rank_str)
+                    if not ONE_BASED_DISSATISFACTION_SCORES:
+                        dissatisfaction_score = dissatisfaction_score - 1
+                    prefs[pn] = dissatisfaction_score
+                except (ValueError, TypeError):
+                    raise ValueError(f"Bad preference: {rank_str!r}")
+        students.append(Student(name=student_name,
+                                number=student_number,
+                                preferences=prefs,
+                                n_projects=n_projects))
     n_students = len(students)
     log.info(f"Number of students: {n_students}")
     assert n_students >= 1
+
+    # Create and return the Problem object
     return Problem(projects=projects, students=students)
 
 
@@ -738,7 +855,7 @@ def main() -> None:
     random.seed(RNG_SEED)
 
     # Go
-    problem = read_data_csv(args.filename)
+    problem = read_data(args.filename)
     log.info(f"Problem:\n{problem}")
     solution = problem.best_solution(
         method=SolveMethod.BRUTE_FORCE if args.bruteforce else SolveMethod.MIP,
@@ -747,10 +864,14 @@ def main() -> None:
     )
     log.info(solution)
     if args.output:
-        solution.write_csv(args.output)
+        solution.write_data(args.output)
     else:
         log.warning("Output not saved. Specify the --output option for that.")
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as e:
+        log.critical(str(e))
+        raise
