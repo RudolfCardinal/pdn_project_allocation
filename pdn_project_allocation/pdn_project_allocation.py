@@ -35,6 +35,12 @@ ONE_BASED_DISSATISFACTION_SCORES = True
 RNG_SEED = 1234  # fixed
 VERY_VERBOSE = False  # debugging option
 
+EXT_CSV = ".csv"
+EXT_XLSX = ".xlsx"
+
+INPUT_TYPES_SUPPORTED = [EXT_CSV, EXT_XLSX]
+OUTPUT_TYPES_SUPPORTED = INPUT_TYPES_SUPPORTED
+
 
 # =============================================================================
 # Enum classes
@@ -366,9 +372,9 @@ class Solution(object):
         """
         # File type?
         _, ext = os.path.splitext(filename)
-        if ext == ".xlsx":
+        if ext == EXT_XLSX:
             self.write_xlsx(filename)
-        elif ext == ".csv":
+        elif ext == EXT_CSV:
             self.write_csv(filename)
         else:
             raise ValueError(
@@ -689,9 +695,9 @@ def read_data(filename: str) -> Problem:
     """
     # File type?
     _, ext = os.path.splitext(filename)
-    if ext == ".xlsx":
+    if ext == EXT_XLSX:
         generator = gen_data_xlsx(filename)
-    elif ext == ".csv":
+    elif ext == EXT_CSV:
         generator = gen_data_csv(filename)
     else:
         raise ValueError(
@@ -751,12 +757,13 @@ def main() -> None:
     )
     parser.add_argument(
         "filename", type=str,
-        help="CSV filename to read. Top left cell is ignored. "
+        help="Spreadsheet filename to read. Top left cell is ignored. "
              "First row (starting with second cell) contains project names. "
              "Other rows are one line per student; "
              "first column contains student names; "
              "other columns contain project-specific ranks "
-             "(1 best, 2 second, etc.)"
+             "(1 best, 2 second, etc.). "
+             "Input file types supported: " + str(INPUT_TYPES_SUPPORTED)
     )
     parser.add_argument(
         "--maxtime", type=float, default=DEFAULT_MAX_SECONDS,
@@ -772,7 +779,8 @@ def main() -> None:
     )
     parser.add_argument(
         "--output", type=str,
-        help="Optional filename to write output to"
+        help="Optional filename to write output to. "
+             "Output types supported: " + str(OUTPUT_TYPES_SUPPORTED)
     )
     parser.add_argument(
         "--verbose", action="store_true",
