@@ -9,6 +9,7 @@ See README.rst
 
 import argparse
 from collections import OrderedDict
+import datetime
 import logging
 from math import factorial
 import os
@@ -27,6 +28,9 @@ from mip import BINARY, minimize, Model, xsum
 
 log = logging.getLogger(__name__)
 
+VERSION = "1.0.0"
+VERSION_DATE = "2019-11-03"
+
 ALMOST_ONE = 0.99
 DEFAULT_MAX_SECONDS = 60
 DEFAULT_SUPERVISOR_WEIGHT = 0.5
@@ -43,7 +47,7 @@ OUTPUT_TYPES_SUPPORTED = INPUT_TYPES_SUPPORTED
 # Playing with the mip package
 # =============================================================================
 
-"""
+r"""
 
 Just for fun, the n-queens problem from
 https://python-mip.readthedocs.io/en/latest/examples.html:
@@ -104,11 +108,6 @@ class InputSheetNames(object):
 class InputSheetHeadings(object):
     PROJECT_NAME = "Project_name"
     MAX_NUMBER_OF_STUDENTS = "Max_number_of_students"
-
-
-class OutputSheetNames(object):
-    PROJECT_ALLOCATIONS = "Project_allocations"
-    STUDENT_ALLOCATIONS = "Student_allocations"
 
 
 # =============================================================================
@@ -368,7 +367,8 @@ class Solution(object):
     """
     def __init__(self,
                  problem: "Problem",
-                 allocation: Dict[Student, Project]) -> None:
+                 allocation: Dict[Student, Project],
+                 supervisor_weight: float) -> None:
         """
         Args:
             problem:
@@ -378,6 +378,7 @@ class Solution(object):
         """
         self.problem = problem
         self.allocation = allocation
+        self.supervisor_weight = supervisor_weight
 
     def __str__(self) -> str:
         lines = ["Solution:"]
@@ -474,7 +475,7 @@ class Solution(object):
         """
         wb = Workbook(write_only=True)  # doesn't create default sheet
 
-        ss = wb.create_sheet(OutputSheetNames.STUDENT_ALLOCATIONS, index=0)
+        ss = wb.create_sheet("Student_allocations", index=0)
         ss.append([
             "Student number",
             "Student name",
@@ -491,7 +492,7 @@ class Solution(object):
                 student.dissatisfaction(project),
             ])
 
-        ps = wb.create_sheet(OutputSheetNames.PROJECT_ALLOCATIONS, index=1)
+        ps = wb.create_sheet("Project_allocations", index=1)
         ps.append([
             "Project number",
             "Project name",
@@ -517,6 +518,28 @@ class Solution(object):
                 ", ".join(student_names),
                 ", ".join(str(x) for x in supervisor_dissatisfactions),
             ])
+
+        zs = wb.create_sheet("Information", index=3)
+        zs_rows = [
+            ["SOFTWARE DETAILS"],
+            [],
+            ["Software", "pdn_project_allocation"],
+            ["Version", VERSION],
+            ["Version date", VERSION_DATE],
+            ["Source code",
+             "https://github.com/RudolfCardinal/pdn_project_allocation"],
+            ["Author", "Rudolf Cardinal (rudolf@pobox.com)"],
+            [],
+            ["RUN INFORMATION"],
+            [],
+            ["Date/time", datetime.datetime.now()],
+            ["Overall weight given to student preferences",
+             1 - self.supervisor_weight],
+            ["Overall weight given to supervisor preferences",
+             self.supervisor_weight],
+        ]
+        for row in zs_rows:
+            zs.append(row)
 
         wb.save(filename)
 
@@ -571,6 +594,7 @@ class Problem(object):
         projects = "\n".join(p.description() for p in self.sorted_projects())
         students = "\n".join(s.description() for s in self.sorted_students())
         return (
+            f"Problem:\n"
             f"Projects:\n"
             f"\n"
             f"{projects}\n"
@@ -604,7 +628,9 @@ class Problem(object):
         """
         return len(self.projects)
 
-    def _make_solution(self, project_indexes: Sequence[int],
+    def _make_solution(self,
+                       project_indexes: Sequence[int],
+                       supervisor_weight: float,
                        validate: bool = True) -> Solution:
         """
         Creates a solution from project index numbers.
@@ -624,7 +650,8 @@ class Problem(object):
         allocation = {}  # type: Dict[Student, Project]
         for student_idx, project_idx in enumerate(project_indexes):
             allocation[self.students[student_idx]] = self.projects[project_idx]
-        return Solution(problem=self, allocation=allocation)
+        return Solution(problem=self, allocation=allocation,
+                        supervisor_weight=supervisor_weight)
 
     def best_solution(self,
                       supervisor_weight: float = DEFAULT_SUPERVISOR_WEIGHT,
@@ -708,7 +735,7 @@ class Problem(object):
         # for s in range(n_students):
         #     for p in range(n_projects):
         #         log.debug(f"x[{s}][{p}].x = {x[s][p].x}")
-        self._debug_model_vars(m)
+        # self._debug_model_vars(m)
         project_indexes = [
             next(p for p in range(n_projects)
                  # if m.var_by_name(varname(s, p)).x >= ALMOST_ONE)
@@ -717,7 +744,8 @@ class Problem(object):
             # If those two expressions are not the same, there's a bug.
             for s in range(n_students)
         ]
-        return self._make_solution(project_indexes)
+        return self._make_solution(project_indexes,
+                                   supervisor_weight=supervisor_weight)
 
     @staticmethod
     def _debug_model_vars(m: Model) -> None:
@@ -910,7 +938,7 @@ first row is the title row):
     Description:
         List of projects (one per row) and their student capacity.
     Format:
-        Project_name    Max_number_of_students
+        {InputSheetHeadings.PROJECT_NAME}    {InputSheetHeadings.MAX_NUMBER_OF_STUDENTS}
         Project One     1
         Project Two     1
         Project Three   2
@@ -934,13 +962,12 @@ first row is the title row):
         List of projects (one per column) and their supervisor's rank
         preferences (1 = top, 2 = next, etc.) for students (one per row).
     Format:
-    
         <ignored>       Project One     Project Two     Project Three   ...
         Miss Smith      1               1                               ...
         Mr Jones        2               2                               ...
         ...             ...             ...
 
-"""
+"""  # noqa
     )
     parser.add_argument(
         "filename", type=str,
@@ -974,7 +1001,7 @@ first row is the title row):
 
     # Go
     problem = Problem.read_data(args.filename)
-    log.info(f"Problem:\n{problem}")
+    log.info(problem)
     solution = problem.best_solution(
         supervisor_weight=args.supervisor_weight,
         max_time_s=args.maxtime,
