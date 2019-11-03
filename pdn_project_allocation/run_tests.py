@@ -33,11 +33,11 @@ def process(infile: str, outfile: str) -> None:
 
 
 def main() -> None:
-    process("test1_equal_preferences_check_output_consistency.csv", "out1.csv")
-    process("test2_trivial_perfect.csv", "out2.csv")
-    process("test3_n60_two_equal_solutions.csv", "out3.csv")
-    process("test4_n10_multiple_ties.csv", "out4.csv")
-    process("test5_mean_vs_variance.csv", "out5.csv")
+    process("test1_equal_preferences_check_output_consistency.xlsx", "out1.xlsx")
+    process("test2_trivial_perfect.xlsx", "out2.xlsx")
+    process("test3_n60_two_equal_solutions.xlsx", "out3.xlsx")
+    process("test4_n10_multiple_ties.xlsx", "out4.xlsx")
+    process("test5_mean_vs_variance.xlsx", "out5.xlsx")
     process("test6_excel.xlsx", "out6.xlsx")
 
 

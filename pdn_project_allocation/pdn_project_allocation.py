@@ -9,36 +9,34 @@ See README.rst
 
 import argparse
 import csv
-from enum import Enum
-import itertools
+from collections import OrderedDict
 import logging
-from math import factorial, inf
+from math import factorial
 import os
 import random
 from statistics import mean, variance
-from typing import Any, Dict, Generator, List, Optional, Sequence, Tuple
+from typing import (Any, Dict, Generator, Iterable, List, Optional, Sequence,
+                    Tuple, Union)
 
+from cardinal_pythonlib.argparse_func import RawDescriptionArgumentDefaultsHelpFormatter  # noqa
 from cardinal_pythonlib.logs import main_only_quicksetup_rootlogger
 from openpyxl.cell import Cell
 from openpyxl.reader.excel import load_workbook
 from openpyxl.workbook.workbook import Workbook
+from openpyxl.worksheet.worksheet import Worksheet
 from mip import BINARY, minimize, Model, xsum
 
 log = logging.getLogger(__name__)
 
 ALMOST_ONE = 0.99
-# DEFAULT_POWER = 1.0
 DEFAULT_MAX_SECONDS = 60
-ONE_BASED_DISSATISFACTION_SCORES = True
-# ... True means that dissatisfaction scores are basically your rank of your
-# allocated project (1 = perfect); False is one lower than that (0 = perfect)
+DEFAULT_SUPERVISOR_WEIGHT = 0.5
 RNG_SEED = 1234  # fixed
 VERY_VERBOSE = False  # debugging option
 
-EXT_CSV = ".csv"
 EXT_XLSX = ".xlsx"
 
-INPUT_TYPES_SUPPORTED = [EXT_CSV, EXT_XLSX]
+INPUT_TYPES_SUPPORTED = [EXT_XLSX]
 OUTPUT_TYPES_SUPPORTED = INPUT_TYPES_SUPPORTED
 
 
@@ -46,9 +44,20 @@ OUTPUT_TYPES_SUPPORTED = INPUT_TYPES_SUPPORTED
 # Enum classes
 # =============================================================================
 
-class SolveMethod(Enum):
-    BRUTE_FORCE = 1
-    MIP = 2
+class InputSheetNames(object):
+    PROJECTS = "Projects"
+    STUDENT_PREFERENCES = "Student_preferences"
+    SUPERVISOR_PREFERENCES = "Supervisor_preferences"
+
+
+class InputSheetHeadings(object):
+    PROJECT_NAME = "Project_name"
+    MAX_NUMBER_OF_STUDENTS = "Max_number_of_students"
+
+
+class OutputSheetNames(object):
+    PROJECT_ALLOCATIONS = "Project_allocations"
+    STUDENT_ALLOCATIONS = "Student_allocations"
 
 
 # =============================================================================
@@ -79,7 +88,102 @@ def n_permutations(n: int, k: int) -> int:
 
 
 # =============================================================================
-# StudentPreferences
+# Preferences
+# =============================================================================
+
+class Preferences(object):
+    """
+    Represents preference as a mapping from arbitrary objects (being preferred)
+    to ranks.
+    """
+    def __init__(self,
+                 n_options: int,
+                 preferences: Dict[Any, int] = None,
+                 owner: Any = None) -> None:
+        """
+        Args:
+            n_options:
+                total number of things to be judged
+            preferences:
+                mapping from "thing being judged" to "rank preference" (1 best)
+            owner:
+                person/thing expressing preferences (for cosmetic purposes
+                only)
+        """
+        self.n_options = n_options
+        self.preferences = OrderedDict()  # type: Dict[Any, int]
+        self.owner = owner
+        self.available_dissatisfaction = sum_of_integers_in_inclusive_range(
+            1, n_options)
+        self.allocated_dissatisfaction = 0
+
+        if preferences:
+            for item, rank in preferences.items():
+                if rank is not None:
+                    self.add(item, rank, _validate=False)
+            self._validate()
+
+    def __str__(self) -> str:
+        parts = ", ".join(f"{k} → {v}" for k, v in self.preferences.items())
+        return (
+            f"Preferences({parts}; "
+            f"unranked options score {self.unranked_dissatisfaction})"
+        )
+
+    def set_n_options(self, n_options: int) -> None:
+        self.n_options = n_options
+        self._validate()
+
+    def add(self, item: Any, rank: int, _validate: bool = True) -> None:
+        """
+        Add a preference for an item.
+        """
+        assert item not in self.preferences, (
+            f"Can't add same item twice; attempt to re-add {item!r}"
+        )
+        assert isinstance(rank, int), (
+            f"Only integer preferences allowed at present; was {rank!r}"
+        )
+        assert rank not in self.preferences.values(), (
+            f"No duplicate dissatisfaction scores allowed at present: "
+            f"attempt to re-add rank {rank}"
+        )
+        self.preferences[item] = rank
+        self.allocated_dissatisfaction += rank
+        if _validate:
+            self._validate()
+
+    def _validate(self) -> None:
+        assert self.n_options > 0, "No options"
+        for rank in self.preferences.values():
+            assert 1 <= rank <= self.n_options, f"Invalid preference: {rank!r}"
+        assert (
+            self.allocated_dissatisfaction <= self.available_dissatisfaction
+        ), (
+            "Dissatisfaction scores add up to more than the maximum"
+        )
+
+    @property
+    def unranked_dissatisfaction(self) -> Optional[float]:
+        unallocated_dissatisfaction = (
+            self.available_dissatisfaction -
+            self.allocated_dissatisfaction
+        )
+        n_unranked = self.n_options - len(self.preferences)
+        return (
+            unallocated_dissatisfaction / n_unranked
+            if n_unranked > 0 else None
+        )
+
+    def preference(self, item: Any) -> Union[int, float]:
+        """
+        Returns a numerical preference score.
+        """
+        return self.preferences.get(item, self.unranked_dissatisfaction)
+
+
+# =============================================================================
+# Student
 # =============================================================================
 
 class Student(object):
@@ -89,7 +193,7 @@ class Student(object):
     def __init__(self,
                  name: str,
                  number: int,
-                 preferences: Dict[int, int],
+                 preferences: Dict["Project", int],
                  n_projects: int) -> None:
         """
         Args:
@@ -98,65 +202,24 @@ class Student(object):
             number:
                 row number of student (cosmetic only)
             preferences:
-                Map from project number (range 1 to n_projects inclusive) to
-                dissatisfaction score (range 0 to n_project - 1 inclusive).
+                Map from project to rank preference (1 to n_projects
+                inclusive).
             n_projects:
                 Total number of projects (for validating inputs).
         """
         self.name = name
         self.number = number
-        self.preferences = preferences
-        self.n_projects = n_projects
-
-        if ONE_BASED_DISSATISFACTION_SCORES:
-            min_dissat = 1
-            max_dissat = n_projects
-        else:
-            min_dissat = 0
-            max_dissat = n_projects - 1
-
-        # Precalculate dissatisfaction score for projects not specifically
-        # ranked:
-        available_dissatisfaction_score = sum_of_integers_in_inclusive_range(
-            min_dissat, max_dissat)
-        allocated_dissatisfaction_score = sum(self.preferences.values())
-        unallocated_dissatisfaction_score = (
-            available_dissatisfaction_score - allocated_dissatisfaction_score
-        )
-        n_prefs = len(preferences)
-        n_unranked = n_projects - n_prefs
-        self.unranked_dissatisfaction = (
-            unallocated_dissatisfaction_score / n_unranked
-        ) if n_unranked > 0 else None
-
-        # Validate
-        assert all(1 <= pn <= n_projects for pn in preferences.keys()), (
-            f"Invalid project number in preferences: {self}"
-        )
-        prefvalues = list(preferences.values())
-        assert all(isinstance(d, int) for d in prefvalues), (
-            f"Only integer dissatisfaction score allowed at present: {self}"
-        )
-        assert all(min_dissat <= d <= max_dissat for d in prefvalues), (
-            f"Invalid dissatisfaction score in preferences: {self}"
-        )
-        assert len(set(prefvalues)) == len(prefvalues), (
-            f"No duplicate dissatisfaction scores allowed at present: {self}"
-        )
-        assert sum(prefvalues) <= available_dissatisfaction_score, (
-            f"Dissatisfaction scores add up to more than maximum: {self}"
+        self.preferences = Preferences(
+            n_options=n_projects,
+            preferences=preferences,
+            owner=self,
         )
 
     def __str__(self) -> str:
-        parts = [
-            f"P#{k}: {self.preferences[k]}"
-            for k in sorted(self.preferences.keys())
-        ]
-        preferences = ", ".join(parts)
-        return (
-            f"{self.name} (S#{self.number}): {{{preferences}}} "
-            f"(other projects scored: {self.unranked_dissatisfaction})"
-        )
+        return f"{self.name} (S#{self.number})"
+
+    def description(self) -> str:
+        return f"{self}: {self.preferences}"
 
     def shortname(self) -> str:
         """
@@ -170,16 +233,11 @@ class Student(object):
         """
         return self.name.lower() < other.name.lower()
 
-    def dissatisfaction(self, project_number: int) -> float:
+    def dissatisfaction(self, project: "Project") -> float:
         """
         How dissatisfied is this student if allocated a particular project?
-
-        First choice scores 0; second choice scores 1; etc.
-        If the project number isn't in the student's preference list, it
-        scores the mean score of all "absent" project number
         """
-        return self.preferences.get(project_number,
-                                    self.unranked_dissatisfaction)
+        return self.preferences.preference(project)
 
 
 # =============================================================================
@@ -190,21 +248,63 @@ class Project(object):
     """
     Simple representation of a project.
     """
-    def __init__(self, name: str, number: int) -> None:
+    def __init__(self,
+                 name: str,
+                 number: int,
+                 max_n_students: int) -> None:
         """
         Args:
             name:
                 project name
             number:
-                project number
+                project number (cosmetic only; matches input order)
+            max_n_students:
+                maximum number of students supported
         """
         assert name, "Missing name"
         assert number >= 1, "Bad project number"
+        assert max_n_students >= 1, "Bad max_n_students"
         self.name = name
         self.number = number
+        self.max_n_students = max_n_students
+        self.supervisor_preferences = None  # type: Optional[Preferences]
 
     def __str__(self) -> str:
-        return f"Project #{self.number}: {self.name}"
+        return f"{self.name} (P#{self.number})"
+
+    def __lt__(self, other: "Project") -> bool:
+        """
+        Default sort is by name (case-insensitive).
+        """
+        return self.name.lower() < other.name.lower()
+
+    def description(self) -> str:
+        """
+        Describes the project.
+        """
+        return (
+            f"{self} (max {self.max_n_students} students): "
+            f"{self.supervisor_preferences}"
+        )
+
+    def set_supervisor_preferences(self,
+                                   n_students: int,
+                                   preferences: Dict[Student, int]) -> None:
+        """
+        Sets the supervisor's student preferences for a project.
+        """
+        self.supervisor_preferences = Preferences(
+            n_options=n_students,
+            owner=self,
+            preferences=preferences
+        )
+
+    def dissatisfaction(self, student: Student) -> float:
+        """
+        How dissatisfied is this project's supervisor if allocated a particular
+        student?
+        """
+        return self.supervisor_preferences.preference(student)
 
 
 # =============================================================================
@@ -231,12 +331,21 @@ class Solution(object):
     def __str__(self) -> str:
         lines = ["Solution:"]
         for student, project in self._gen_student_project_pairs():
-            d = student.dissatisfaction(project.number)
-            lines.append(f"{student.shortname()} -> "
-                         f"{project} (dissatisfaction {d})")
+            std = student.dissatisfaction(project)
+            svd = project.dissatisfaction(student)
+            lines.append(
+                f"{student.shortname()} -> {project} "
+                f"(student dissatisfaction {std}; "
+                f"supervisor dissatisfaction {svd})")
         lines.append("")
-        lines.append(f"Dissatisfaction mean: {self.dissatisfaction_mean()}")
-        lines.append(f"Dissatisfaction variance: {self.dissatisfaction_variance()}")  # noqa
+        lines.append(f"Student dissatisfaction mean: "
+                     f"{self.student_dissatisfaction_mean()}")
+        lines.append(f"Student dissatisfaction variance: "
+                     f"{self.student_dissatisfaction_variance()}")
+        lines.append(f"Supervisor dissatisfaction mean: "
+                     f"{self.supervisor_dissatisfaction_mean()}")
+        lines.append(f"Supervisor dissatisfaction variance: "
+                     f"{self.supervisor_dissatisfaction_variance()}")
         return "\n".join(lines)
 
     def shortdesc(self) -> str:
@@ -248,7 +357,7 @@ class Solution(object):
                  for s in students]
         return (
             "{" + ", ".join(parts) + "}" +
-            f", dissatisfaction {self.dissatisfaction_scores()}"
+            f", student dissatisfaction {self.student_dissatisfaction_scores()}"
         )
 
     def _gen_student_project_pairs(self) -> Generator[Tuple[Student, Project],
@@ -261,108 +370,103 @@ class Solution(object):
             project = self.allocation[student]
             yield student, project
 
-    def dissatisfaction_scores(self) -> List[float]:
+    def student_dissatisfaction_scores(self) -> List[float]:
         """
         All dissatisfaction scores.
         """
         dscores = []  # type: List[float]
         for student in self.problem.students:
             project = self.allocation[student]
-            dscores.append(student.dissatisfaction(project.number))
+            dscores.append(student.dissatisfaction(project))
         return dscores
 
-    def dissatisfaction_total(self) -> float:
-        """
-        Total of dissatisfaction scores.
-        """
-        return sum(self.dissatisfaction_scores())
-
-    def dissatisfaction_mean(self) -> float:
+    def student_dissatisfaction_mean(self) -> float:
         """
         Mean dissatisfaction per student.
         """
-        return mean(self.dissatisfaction_scores())
+        return mean(self.student_dissatisfaction_scores())
 
-    # def dissatisfaction_exponentiated_mean(self, power: float) -> float:
-    #     """
-    #     Mean of dissatisfaction scores raised to a power.
-    #
-    #     No longer used.
-    #     """
-    #     exp_scores = [s ** power for s in self.dissatisfaction_scores()]
-    #     return mean(exp_scores)
-
-    def dissatisfaction_variance(self) -> float:
+    def student_dissatisfaction_variance(self) -> float:
         """
         Variance of dissatisfaction scores.
         """
-        return variance(self.dissatisfaction_scores())
+        return variance(self.student_dissatisfaction_scores())
 
-    def score(self) -> Tuple[float, float]:
+    def supervisor_dissatisfaction_scores(self) -> List[float]:
         """
-        Score for comparing solutions.
-        Used for the brute-force approach.
+        All dissatisfaction scores.
         """
-        return (self.dissatisfaction_mean(),
-                self.dissatisfaction_variance())
+        dscores = []  # type: List[float]
+        for project in self.problem.projects:
+            dscore = 0
+            for student in self.problem.students:
+                if self.allocation[student] == project:
+                    dscore += project.dissatisfaction(student)
+            dscores.append(dscore)
+        return dscores
 
-    @staticmethod
-    def worst_possible_score() -> Tuple[float, float]:
+    def supervisor_dissatisfaction_mean(self) -> float:
         """
-        Worst possible score, in the same format as :meth:`score`.
-        Used for the brute-force approach.
+        Mean dissatisfaction per student.
         """
-        return inf, inf
+        return mean(self.supervisor_dissatisfaction_scores())
 
-    @staticmethod
-    def score_good_enough(score: Tuple[float, float]) -> bool:
+    def supervisor_dissatisfaction_variance(self) -> float:
         """
-        A score that is good enough to stop (e.g. the best possible score),
-        in the same format as :meth:`score`.
-        Used for the brute-force approach.
+        Variance of dissatisfaction scores.
         """
-        return score[0] <= 0
-
-    @staticmethod
-    def _output_titles() -> List[str]:
-        return [
-            "Student name",
-            "Project number",
-            "Project name",
-            "Student's rank of (dissatisfaction with) allocated project"
-        ]
-
-    def write_csv(self, filename: str) -> None:
-        """
-        Writes the solution to a CSV file.
-        """
-        log.info(f"Writing to: {filename}")
-        with open(filename, "wt") as f:
-            writer = csv.writer(f)
-            writer.writerow(self._output_titles())
-            for student, project in self._gen_student_project_pairs():
-                writer.writerow([
-                    student.name,
-                    project.number,
-                    project.name,
-                    student.dissatisfaction(project.number)
-                ])
+        return variance(self.supervisor_dissatisfaction_scores())
 
     def write_xlsx(self, filename: str) -> None:
         """
         Writes the solution to an Excel XLSX file.
         """
-        wb = Workbook()
-        ws = wb.active  # we only care about the first sheet
-        ws.title = "Project_allocations"
-        for col, text in enumerate(self._output_titles(), start=1):
-            ws.cell(row=1, column=col).value = text
-        for row, (student, project) in enumerate(
-                self._gen_student_project_pairs(), start=2):
-            ws.cell(row=row, column=1).value = student.name
-            ws.cell(row=row, column=2).value = project.number
-            ws.cell(row=row, column=3).value = project.name
-            ws.cell(row=row, column=4).value = student.dissatisfaction(project.number)  # noqa
+        wb = Workbook(write_only=True)  # doesn't create default sheet
+
+        ss = wb.create_sheet(OutputSheetNames.STUDENT_ALLOCATIONS, index=0)
+        ss.append([
+            "Student number",
+            "Student name",
+            "Project number",
+            "Project name",
+            "Student's rank of (dissatisfaction with) allocated project",
+        ])
+        for student, project in self._gen_student_project_pairs():
+            ss.append([
+                student.number,
+                student.name,
+                project.number,
+                project.name,
+                student.dissatisfaction(project),
+            ])
+
+        ps = wb.create_sheet(OutputSheetNames.PROJECT_ALLOCATIONS, index=1)
+        ps.append([
+            "Project number",
+            "Project name",
+            "Student number(s)",
+            "Student name(s)",
+            "Project supervisor's rank(s) of (dissatisfaction with) allocated student(s)",  # noqa
+        ])
+        for project in self.problem.sorted_projects():
+            student_numbers = []  # type: List[int]
+            student_names = []  # type: List[str]
+            supervisor_dissatisfactions = []  # type: List[float]
+            for student, allocated_proj in self._gen_student_project_pairs():
+                if allocated_proj == project:
+                    student_numbers.append(student.number)
+                    student_names.append(student.name)
+                    supervisor_dissatisfactions.append(
+                        project.dissatisfaction(student)
+                    )
+            ps.append([
+                project.number,
+                project.name,
+                ", ".join(str(x) for x in student_numbers),
+                ", ".join(student_names),
+                ", ".join(str(x) for x in supervisor_dissatisfactions),
+            ])
+
         wb.save(filename)
 
     def write_data(self, filename: str) -> None:
@@ -374,8 +478,6 @@ class Solution(object):
         _, ext = os.path.splitext(filename)
         if ext == EXT_XLSX:
             self.write_xlsx(filename)
-        elif ext == EXT_CSV:
-            self.write_csv(filename)
         else:
             raise ValueError(
                 f"Don't know how to write file type {ext!r} for {filename!r}")
@@ -399,22 +501,24 @@ class Problem(object):
             students:
                 List of students, with their project preferences.
 
-        Note that the students are put into a "deterministic random" order,
-        i.e. deterministically sorted, then shuffled (but with a globally
-        fixed random number generator seed).
+        Note that the students and projects are put into a "deterministic
+        random" order, i.e. deterministically sorted, then shuffled (but with a
+        globally fixed random number generator seed).
         """
         self.projects = projects
         self.students = students
         # Fix the order:
         self.students.sort()
         random.shuffle(self.students)
+        self.projects.sort()
+        random.shuffle(self.projects)
 
     def __str__(self) -> str:
         """
         We re-sort the output for display purposes.
         """
-        projects = "\n".join(str(p) for p in self.projects)
-        students = "\n".join(str(s) for s in self.sorted_students())
+        projects = "\n".join(p.description() for p in self.sorted_projects())
+        students = "\n".join(s.description() for s in self.sorted_students())
         return (
             f"Projects:\n"
             f"\n"
@@ -427,9 +531,15 @@ class Problem(object):
 
     def sorted_students(self) -> List[Student]:
         """
-        Students, sorted by name.
+        Students, sorted by number.
         """
-        return sorted(self.students)
+        return sorted(self.students, key=lambda s: s.number)
+
+    def sorted_projects(self) -> List[Project]:
+        """
+        Projects, sorted by number.
+        """
+        return sorted(self.projects, key=lambda p: p.number)
 
     def n_students(self) -> int:
         """
@@ -442,20 +552,6 @@ class Problem(object):
         Number of projects.
         """
         return len(self.projects)
-
-    def best_solution(self,
-                      method: SolveMethod = SolveMethod.MIP,
-                      max_time_s: float = DEFAULT_MAX_SECONDS) \
-            -> Optional[Solution]:
-        """
-        Return the best solution.
-        """
-        if method == SolveMethod.BRUTE_FORCE:
-            return self._best_solution_brute_force()
-        elif method == SolveMethod.MIP:
-            return self._best_solution_mip(max_seconds=max_time_s)
-        else:
-            raise ValueError(f"Bad solve method: {method!r}")
 
     def _make_solution(self, project_indexes: Sequence[int],
                        validate: bool = True) -> Solution:
@@ -474,74 +570,26 @@ class Problem(object):
             assert len(project_indexes) == n_students, (
                 "Number of project indices does not match number of students"
             )
-            assert len(set(project_indexes)) == n_students, (
-                "Project indices are not unique"
-            )
         allocation = {}  # type: Dict[Student, Project]
         for student_idx, project_idx in enumerate(project_indexes):
             allocation[self.students[student_idx]] = self.projects[project_idx]
         return Solution(problem=self, allocation=allocation)
 
-    # -------------------------------------------------------------------------
-    # Brute force
-    # -------------------------------------------------------------------------
-
-    def _best_solution_brute_force(self) -> Optional[Solution]:
-        """
-        Brute force method.
-        
-        Only for playing. With 5 students and 5 projects, this examines 120
-        combinations, which is fine. With 60 students and 60 projects, then it
-        will examine up to
-        8320987112741389895059729406044653910769502602349791711277558941745407315941523456
-        = 8.3e81.
-        """  # noqa
-        log.info("Brute force approach")
-        n_expected = n_permutations(self.n_projects(), self.n_students())
-        log.info(f"Expecting to test {n_expected} solutions")
-        score = Solution.worst_possible_score()
-        best = None  # type: Optional[Solution]
-        n_tested = 0
-        for solution in self._gen_all_solutions():
-            if VERY_VERBOSE:
-                log.debug(f"Trying: {solution.shortdesc()}")
-            n_tested += 1
-            s = solution.score()
-            if s < score:
-                log.debug(f"Improved score from {score} to {s}")
-                best = solution
-                score = s
-                if Solution.score_good_enough(score):
-                    log.info("Found good-enough solution; stopping")
-                    break
-            elif VERY_VERBOSE:
-                log.debug(f"Ignoring solution with score {s}")
-        log.info(f"Tested {n_tested} solutions")
-        return best
-
-    def _gen_all_solutions(self) -> Generator[Solution, None, None]:
-        """
-        Generates all possible solutions, in a mindless way.
-        """
-        all_project_indexes = list(range(len(self.projects)))
-        n_students = len(self.students)
-        for project_indexes in itertools.permutations(all_project_indexes,
-                                                      n_students):
-            yield self._make_solution(project_indexes)
-
-    # -------------------------------------------------------------------------
-    # MIP; see https://python-mip.readthedocs.io/
-    # -------------------------------------------------------------------------
-
-    def _best_solution_mip(self,
-                           max_seconds: float = DEFAULT_MAX_SECONDS) \
+    def best_solution(self,
+                      supervisor_weight: float = DEFAULT_SUPERVISOR_WEIGHT,
+                      max_time_s: float = DEFAULT_MAX_SECONDS) \
             -> Optional[Solution]:
         """
+        Return the best solution.
+
         Optimize with the MIP package.
         This is extremely impressive.
+        See https://python-mip.readthedocs.io/.
 
         Args:
-            max_seconds:
+            supervisor_weight:
+                weight allocated to supervisor preferences
+            max_time_s:
                 Time limit for optimizer.
         """
         def varname(s_: int, p_: int) -> str:
@@ -551,14 +599,23 @@ class Problem(object):
             """
             return f"x[{s_},{p_}]"
 
-        log.info("MIP approach")
+        assert 0 <= supervisor_weight <= 1
+        student_weight = 1 - supervisor_weight
+        log.info(
+            f"MIP approach giving student preferences weight {student_weight} "
+            f"and supervisor preferences weight {supervisor_weight}")
         n_students = len(self.students)
         n_projects = len(self.projects)
-        # Student dissatisfaction scores for each project
+        # Dissatisfaction scores for each project
         # CAUTION: get indexes the right way round!
-        dissatisfaction = [
+        weighted_dissatisfaction = [
             [
-                self.students[s].dissatisfaction(self.projects[p].number)
+                (
+                    student_weight *
+                    self.students[s].dissatisfaction(self.projects[p]) +
+                    supervisor_weight *
+                    self.projects[p].dissatisfaction(self.students[s])
+                )
                 for p in range(n_projects)  # second index
             ]
             for s in range(n_students)  # first index
@@ -566,8 +623,8 @@ class Problem(object):
 
         # Model
         m = Model("Student project allocation")
-        # CAUTION: get indexes the right way round!
         # Binary variables to optimize, each linking a student to a project
+        # CAUTION: get indexes the right way round!
         x = [
             [
                 m.add_var(varname(s, p), var_type=BINARY)
@@ -578,7 +635,7 @@ class Problem(object):
 
         # Objective: happy students
         m.objective = minimize(xsum(
-            dissatisfaction[s][p] * x[s][p]
+            x[s][p] * weighted_dissatisfaction[s][p]
             for p in range(n_projects)
             for s in range(n_students)
         ))
@@ -587,12 +644,12 @@ class Problem(object):
         # - For each student, exactly one project
         for s in range(n_students):
             m += xsum(x[s][p] for p in range(n_projects)) == 1
-        # - For each project, zero or one students
-        for p in range(n_projects):
-            m += xsum(x[s][p] for s in range(n_students)) <= 1
+        # - For each project, up to the maximum number of students
+        for p, project in enumerate(self.projects):
+            m += xsum(x[s][p] for s in range(n_students)) <= project.max_n_students  # noqa
 
         # Optimize
-        m.optimize(max_seconds=max_seconds)
+        m.optimize(max_seconds=max_time_s)
 
         # Extract results
         if not m.num_solutions:
@@ -621,127 +678,164 @@ class Problem(object):
             lines.append(f"{v.name} == {v.x}")
         log.debug("\n".join(lines))
 
-
-# =============================================================================
-# Read data in
-# =============================================================================
-
-def gen_from_spreadsheet(rowgen: Generator[Any, None, None]) \
-        -> Generator[Any, None, None]:
-    """
-    From a spreadsheet row generator, provide data for :func:`read_data`.
-
-    The spreadsheet format is:
-
-    .. code-block:: none
-
-        ignored,        project_name_1, project_name_2, ...
-        student_name_1, rank_or_blank,  rank_or_blank, ...
-        student_name_2, rank_or_blank,  rank_or_blank, ...
-        ...
-
-    """
-    # Projects
-    firstrow = next(rowgen)
-    if len(firstrow) < 2:
-        raise ValueError("Bad project row")
-    yield firstrow[1:]  # project names
-
-    # Students and preferences
-    for student_number, row in enumerate(rowgen, start=1):
-        if len(row) < 2:
-            raise ValueError("Bad student row")
-        student_name = row[0]
-        rank_strings = row[1:]
-        yield student_number, student_name, rank_strings
-
-
-def gen_data_csv(filename: str) -> Generator[Any, None, None]:
-    """
-    Reads data from a CSV file and generates it in the format required by
-    :func:`read_data`.
-    """
-    log.info(f"Reading CSV file: {filename}")
-    with open(filename, "rt") as f:
-        reader = csv.reader(f)
-        yield from gen_from_spreadsheet(reader)
-
-
-def gen_data_xlsx(filename: str) -> Generator[Any, None, None]:
-    """
-    Reads data from an Excel (XLSX) file and generates it in the format
-    required by :func:`read_data`.
-
-    The XLSX file format is the same as the CSV file format.
-    Only the first sheet in the workbook is considered.
-    """
-    def gen_row_values(rowgen: Generator[Sequence[Cell], None, None]) \
-            -> Generator[List[str], None, None]:
-        for row in rowgen:
-            yield [cell.value for cell in row]
-
-    log.info(f"Reading XLSX file: {filename}")
-    wb = load_workbook(filename, read_only=True)
-    ws = wb.active
-    # ... the active sheet is always the first to begin with
-    gen_row_cells = ws.iter_rows()
-
-    yield from gen_from_spreadsheet(gen_row_values(gen_row_cells))
-
-
-def read_data(filename: str) -> Problem:
-    """
-    Reads a file, autodetecting its format, and returning the :class:`Problem`.
-    """
-    # File type?
-    _, ext = os.path.splitext(filename)
-    if ext == EXT_XLSX:
-        generator = gen_data_xlsx(filename)
-    elif ext == EXT_CSV:
-        generator = gen_data_csv(filename)
-    else:
-        raise ValueError(
-            f"Don't know how to read file type {ext!r} for {filename!r}")
-
-    # Generate and read data
-    projects = []  # type: List[Project]
-    students = []  # type: List[Student]
-
-    # 1. Projects
-    project_names = next(generator)
-    n_projects = len(project_names)
-    log.info(f"Number of projects: {n_projects}")
-    assert n_projects >= 1
-    for pnumber, pname in enumerate(project_names, start=1):
-        projects.append(Project(name=pname, number=pnumber))
-
-    # 2. Students
-    for student_number, student_name, rank_strings in generator:
-        if len(rank_strings) != n_projects:
+    @classmethod
+    def read_data(cls, filename: str) -> "Problem":
+        """
+        Reads a file, autodetecting its format, and returning the
+        :class:`Problem`.
+        """
+        # File type?
+        _, ext = os.path.splitext(filename)
+        if ext == EXT_XLSX:
+            return cls.read_data_xlsx(filename)
+        else:
             raise ValueError(
-                f"Student #{student_number} ({student_name} has a row with "
-                f"{len(rank_strings)} preferences but we expect {n_projects}, "
-                f"the number of projects")
-        prefs = {}  # type: Dict[int, int]
-        for pn, rank_str in enumerate(rank_strings, start=1):
-            if rank_str:
-                try:
-                    dissatisfaction_score = int(rank_str)
-                    if not ONE_BASED_DISSATISFACTION_SCORES:
-                        dissatisfaction_score = dissatisfaction_score - 1
-                    prefs[pn] = dissatisfaction_score
-                except (ValueError, TypeError):
-                    raise ValueError(f"Bad preference: {rank_str!r}")
-        students.append(Student(name=student_name,
-                                number=student_number,
-                                preferences=prefs,
-                                n_projects=n_projects))
-    n_students = len(students)
-    log.info(f"Number of students: {n_students}")
-    assert n_students >= 1
+                f"Don't know how to read file type {ext!r} for {filename!r}")
 
-    # Create and return the Problem object
-    return Problem(projects=projects, students=students)
+    @classmethod
+    def read_data_xlsx(cls, filename: str) -> "Problem":
+        """
+        Reads a :class:`Problem` from an Excel XLSX file.
+        """
+        log.info(f"Reading XLSX file: {filename}")
+        wb = load_workbook(filename, read_only=True, keep_vba=False,
+                           data_only=True,  keep_links=False)
+
+        # ---------------------------------------------------------------------
+        # Projects
+        # ---------------------------------------------------------------------
+        projects = []  # type: List[Project]
+        # These will raise an error if the named sheet does not exist:
+        ws_projects = wb[InputSheetNames.PROJECTS]  # type: Worksheet
+        assert (
+            ws_projects.cell(row=1, column=1).value ==
+            InputSheetHeadings.PROJECT_NAME and
+            ws_projects.cell(row=1, column=2).value ==
+            InputSheetHeadings.MAX_NUMBER_OF_STUDENTS
+        ), (
+            f"Bad headings to worksheet {InputSheetNames.PROJECTS}; expected: "
+            f"{InputSheetHeadings.PROJECT_NAME}, "
+            f"{InputSheetHeadings.MAX_NUMBER_OF_STUDENTS:}"
+        )
+        for row_number, row in enumerate(ws_projects.iter_rows(min_row=2),
+                                         start=2):  # type: int, Sequence[Cell]
+            project_number = row_number - 1
+            project_name = row[0].value
+            assert project_name, (
+                f"Missing project name in {InputSheetNames.PROJECTS} "
+                f"row {row_number}"
+            )
+            try:
+                max_n_students = int(row[1].value)
+            except (ValueError, TypeError):
+                raise ValueError(
+                    f"Bad max_n_students in {InputSheetNames.PROJECTS} "
+                    f"row {row_number}"
+                )
+            projects.append(Project(name=project_name,
+                                    number=project_number,
+                                    max_n_students=max_n_students))
+        n_projects = len(projects)
+        assert n_projects, "No projects defined!"
+        log.info(f"Number of projects: {n_projects}")
+
+        # ---------------------------------------------------------------------
+        # Students with their preferences
+        # ---------------------------------------------------------------------
+        students = []  # type: List[Student]
+        ws_students = wb[InputSheetNames.STUDENT_PREFERENCES]  # type: Worksheet  # noqa
+        # Check project headings
+        assert all(
+            ws_students.cell(row=1, column=i + 2).value == projects[i].name
+            for i in range(len(projects))
+        ), (
+            f"First row of {InputSheetNames.STUDENT_PREFERENCES} sheet "
+            f"must contain all project names in the same order as in the "
+            f"{InputSheetNames.PROJECTS} sheet"
+        )
+        # Students
+        stp_rows = ws_students.iter_rows(min_row=2)
+        for row_number, row in enumerate(stp_rows, start=2):
+            student_number = row_number - 1
+            assert len(row) == n_projects + 1, (
+                f"In {InputSheetNames.STUDENT_PREFERENCES}, student on row "
+                f"{student_number + 1} has a preference row of the wrong "
+                f"length (expected {n_projects + 1})."
+            )
+            student_name = row[0].value
+            student_preferences = OrderedDict()  # type: Dict[Project, int]
+            for project_number, cell in enumerate(row[1:], start=1):
+                try:
+                    pref = int(cell.value) if cell.value else None
+                except (ValueError, TypeError):
+                    raise ValueError(
+                        f"Bad preference for student {student_name} in "
+                        f"{InputSheetNames.STUDENT_PREFERENCES} "
+                        f"row {row_number}")
+                project = projects[project_number - 1]
+                student_preferences[project] = pref
+            students.append(Student(name=student_name,
+                                    number=student_number,
+                                    preferences=student_preferences,
+                                    n_projects=n_projects))
+        n_students = len(students)
+        log.info(f"Number of students: {n_students}")
+        assert n_students >= 1
+
+        # ---------------------------------------------------------------------
+        # Supervisor preferences, stored with their project object
+        # ---------------------------------------------------------------------
+        ws_supervisorprefs = wb[InputSheetNames.SUPERVISOR_PREFERENCES]  # type: Worksheet  # noqa
+        # Accessing cells by (row, column) index is ridiculously slow here, and
+        # the time is spent in the internals of openpyxl; specifically, in
+        # xml.etree.ElementTree.XMLParser.feed(). That's true even after
+        # install lxml as recommended, and specifying the "simple read-only"
+        # options. So, it is **much** faster to load all the values like this
+        # and then operate on the copies (e.g. ~6 seconds becomes ~1 ms):
+        svp_rows = [
+            [cell.value for cell in row]
+            for row in ws_supervisorprefs.iter_rows()
+        ]  # index as : svp_rows[row_zero_based][column_zero_based]
+
+        # Check project headings
+        assert all(
+            svp_rows[0][i + 1] == projects[i].name
+            for i in range(len(projects))
+        ), (
+            f"First row of {InputSheetNames.SUPERVISOR_PREFERENCES} sheet "
+            f"must contain all project names in the same order as in the "
+            f"{InputSheetNames.PROJECTS} sheet"
+        )
+        # Check student names
+        assert (
+            svp_rows[i + 1][0] == students[i].name
+            for i in range(len(students))
+        ), (
+            f"First column of {InputSheetNames.SUPERVISOR_PREFERENCES} sheet "
+            f"must contain all student names in the same order as in the "
+            f"{InputSheetNames.STUDENT_PREFERENCES} sheet"
+        )
+        for pcol, project in enumerate(projects, start=2):
+            supervisor_prefs = OrderedDict()  # type: Dict[Student, int]
+            for srow, student in enumerate(students, start=2):
+                pref_str = svp_rows[srow - 1][pcol - 1]
+                try:
+                    pref = int(pref_str) if pref_str else None
+                except (ValueError, TypeError):
+                    raise ValueError(
+                        f"Bad preference at row={srow}, col={pcol} in "
+                        f"{InputSheetNames.SUPERVISOR_PREFERENCES}")
+                supervisor_prefs[student] = pref
+            project.set_supervisor_preferences(
+                n_students=n_students,
+                preferences=supervisor_prefs
+            )
+
+        # ---------------------------------------------------------------------
+        # Create and return the Problem object
+        # ---------------------------------------------------------------------
+        log.info("... finished reading")
+        return Problem(projects=projects, students=students)
 
 
 # =============================================================================
@@ -753,29 +847,63 @@ def main() -> None:
     Command-line entry point.
     """
     parser = argparse.ArgumentParser(
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+        formatter_class=RawDescriptionArgumentDefaultsHelpFormatter,
+        description=f"""
+Allocate students to projects, maximizing some version of happiness.
+
+The input spreadsheet should have the following format (in each case, the
+first row is the title row):
+
+    Sheet name:
+        {InputSheetNames.PROJECTS}
+    Description:
+        List of projects (one per row) and their student capacity.
+    Format:
+        Project_name    Max_number_of_students
+        Project One     1
+        Project Two     1
+        Project Three   2
+        ...             ...
+        
+    Sheet name:
+        {InputSheetNames.STUDENT_PREFERENCES}
+    Description:
+        List of students (one per row) and their rank preferences (1 = top, 2 =
+        next, etc.) for projects (one per column).
+    Format:
+        <ignored>       Project One     Project Two     Project Three   ...
+        Miss Smith      1               2                               ...
+        Mr Jones        2               1               3               ...
+        ...             ...             ...             ...             ...
+    
+    
+    Sheet name:
+        {InputSheetNames.SUPERVISOR_PREFERENCES}
+    Description:
+        List of projects (one per column) and their supervisor's rank
+        preferences (1 = top, 2 = next, etc.) for students (one per row).
+    Format:
+    
+        <ignored>       Project One     Project Two     Project Three   ...
+        Miss Smith      1               1                               ...
+        Mr Jones        2               2                               ...
+        ...             ...             ...
+
+"""
     )
     parser.add_argument(
         "filename", type=str,
-        help="Spreadsheet filename to read. Top left cell is ignored. "
-             "First row (starting with second cell) contains project names. "
-             "Other rows are one line per student; "
-             "first column contains student names; "
-             "other columns contain project-specific ranks "
-             "(1 best, 2 second, etc.). "
+        help="Spreadsheet filename to read. "
              "Input file types supported: " + str(INPUT_TYPES_SUPPORTED)
+    )
+    parser.add_argument(
+        "--supervisor_weight", type=float, default=DEFAULT_SUPERVISOR_WEIGHT,
+        help="Weight allocated to supervisor preferences (student preferences "
+             "are weighted (1 minus this)"
     )
     parser.add_argument(
         "--maxtime", type=float, default=DEFAULT_MAX_SECONDS,
         help="Maximum time (in seconds) to run MIP optimizer for"
-    )
-    # parser.add_argument(
-    #     "--power", type=float, default=DEFAULT_POWER,
-    #     help="We optimize dissatisfaction ^ power. What power should we use?"
-    # )
-    parser.add_argument(
-        "--bruteforce", action="store_true",
-        help="Use brute-force method (only for debugging!)"
     )
     parser.add_argument(
         "--output", type=str,
@@ -794,11 +922,10 @@ def main() -> None:
     random.seed(RNG_SEED)
 
     # Go
-    problem = read_data(args.filename)
+    problem = Problem.read_data(args.filename)
     log.info(f"Problem:\n{problem}")
     solution = problem.best_solution(
-        method=SolveMethod.BRUTE_FORCE if args.bruteforce else SolveMethod.MIP,
-        # power=args.power,
+        supervisor_weight=args.supervisor_weight,
         max_time_s=args.maxtime,
     )
     log.info(solution)

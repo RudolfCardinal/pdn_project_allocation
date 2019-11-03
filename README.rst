@@ -109,3 +109,14 @@ Changelog
 - 2019-11-02:
 
   - Excel XLSX input/output, in addition to CSV.
+
+- 2019-11-03:
+
+  - Excel only (removed CSV).
+  - Supervisors can express preferences too.
+  - Removed brute force method; now impractical.
+    (With 5 students and 5 projects, one student per project, and no supervisor
+    preferences, the brute-force approach examines up to 120 combinations,
+    which is fine. With 60 students and 60 projects, then it will examine up to
+    8320987112741389895059729406044653910769502602349791711277558941745407315941523456
+    = 8.3e81).

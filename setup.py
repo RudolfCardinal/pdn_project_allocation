@@ -43,6 +43,7 @@ setup(
         'cardinal_pythonlib >= 1.0.71',
         'mip >= 1.5.3',
         'openpyxl >= 2.6.2',
+        'lxml==4.4.1',  # Will speed up openpyxl export
     ],
 
     # Launch scripts:
