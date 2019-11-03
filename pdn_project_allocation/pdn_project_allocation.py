@@ -8,14 +8,13 @@ See README.rst
 """
 
 import argparse
-import csv
 from collections import OrderedDict
 import logging
 from math import factorial
 import os
 import random
 from statistics import mean, variance
-from typing import (Any, Dict, Generator, Iterable, List, Optional, Sequence,
+from typing import (Any, Dict, Generator, List, Optional, Sequence,
                     Tuple, Union)
 
 from cardinal_pythonlib.argparse_func import RawDescriptionArgumentDefaultsHelpFormatter  # noqa
@@ -38,6 +37,58 @@ EXT_XLSX = ".xlsx"
 
 INPUT_TYPES_SUPPORTED = [EXT_XLSX]
 OUTPUT_TYPES_SUPPORTED = INPUT_TYPES_SUPPORTED
+
+
+# =============================================================================
+# Playing with the mip package
+# =============================================================================
+
+"""
+
+Just for fun, the n-queens problem from
+https://python-mip.readthedocs.io/en/latest/examples.html:
+
+from sys import stdout
+from mip import Model, xsum, MAXIMIZE, BINARY
+
+# number of queens
+n = 75
+
+queens = Model()
+
+x = [[queens.add_var('x({},{})'.format(i, j), var_type=BINARY)
+      for j in range(n)] for i in range(n)]
+
+# one per row
+for i in range(n):
+    queens += xsum(x[i][j] for j in range(n)) == 1, 'row({})'.format(i)
+
+# one per column
+for j in range(n):
+    queens += xsum(x[i][j] for i in range(n)) == 1, 'col({})'.format(j)
+
+# diagonal \
+for p, k in enumerate(range(2 - n, n - 2 + 1)):
+    queens += xsum(x[i][j] for i in range(n) for j in range(n)
+                   if i - j == k) <= 1, 'diag1({})'.format(p)
+
+# diagonal /
+for p, k in enumerate(range(3, n + n)):
+    queens += xsum(x[i][j] for i in range(n) for j in range(n)
+                   if i + j == k) <= 1, 'diag2({})'.format(p)
+
+queens.optimize()
+
+text = ""
+if queens.num_solutions:
+    for i, v in enumerate(queens.vars):
+        text += 'Q ' if v.x >= 0.99 else '. '
+        if i % n == n-1:
+            text += "\n"
+
+print(text)
+
+"""
 
 
 # =============================================================================
@@ -633,7 +684,7 @@ class Problem(object):
             for s in range(n_students)  # first index
         ]
 
-        # Objective: happy students
+        # Objective: happy students/supervisors
         m.objective = minimize(xsum(
             x[s][p] * weighted_dissatisfaction[s][p]
             for p in range(n_projects)

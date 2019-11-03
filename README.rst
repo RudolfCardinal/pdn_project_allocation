@@ -43,9 +43,11 @@ This produces solutions to match the test data in the
 Description
 -----------
 
-- There are a number of projects p, and a number of students s, such that
-  p >= s. One student per project (if a project can take >1 student, that
-  project gets entered as two projects!).
+- There are a number of projects p, and a number of students s.
+
+- Every student needs exactly 1 project.
+
+- Every project can take a certain project-specific number of students.
 
 - Projects are represented by integers from 1...p.
 
@@ -85,6 +87,10 @@ Slightly tricky question: optimizing mean versus variance.
 
   - CURRENTLY EXPERIMENTING WITH test4*.csv -- NOT ACHIEVED YET! Optimizing
     mean happiness seems to be fine.
+
+- Supervisors can now also express preferences for students.
+  The overall balance between "student satisfaction" and "supervisor
+  satisfaction" is set by a parameter (default: equal weighting).
 
 
 Changelog
