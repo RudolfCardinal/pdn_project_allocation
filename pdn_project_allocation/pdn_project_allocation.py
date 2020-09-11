@@ -11,7 +11,6 @@ import argparse
 from collections import OrderedDict
 import datetime
 import logging
-from math import factorial
 import os
 import random
 from statistics import mean, variance
@@ -20,10 +19,7 @@ from typing import (Any, Dict, Generator, List, Optional, Sequence,
 
 from cardinal_pythonlib.argparse_func import RawDescriptionArgumentDefaultsHelpFormatter  # noqa
 from cardinal_pythonlib.logs import main_only_quicksetup_rootlogger
-from cardinal_pythonlib.maths_py import (
-    n_permutations,
-    sum_of_integers_in_inclusive_range,
-)
+from cardinal_pythonlib.maths_py import sum_of_integers_in_inclusive_range
 from openpyxl.cell import Cell
 from openpyxl.reader.excel import load_workbook
 from openpyxl.workbook.workbook import Workbook
@@ -32,8 +28,8 @@ from mip import BINARY, minimize, Model, xsum
 
 log = logging.getLogger(__name__)
 
-VERSION = "1.0.0"
-VERSION_DATE = "2019-11-03"
+VERSION = "1.0.1"
+VERSION_DATE = "2020-09-11"
 
 ALMOST_ONE = 0.99
 DEFAULT_MAX_SECONDS = 60
@@ -103,48 +99,24 @@ print(text)
 # Enum classes
 # =============================================================================
 
-class InputSheetNames(object):
+class SheetNames(object):
     """
-    Sheet names within the input spreadsheet.
+    Sheet names within the input/output spreadsheet file.
     """
-    PROJECTS = "Projects"
-    STUDENT_PREFERENCES = "Student_preferences"
-    SUPERVISOR_PREFERENCES = "Supervisor_preferences"
+    PROJECTS = "Projects"  # input, output
+    STUDENT_PREFERENCES = "Student_preferences"  # input, output
+    SUPERVISOR_PREFERENCES = "Supervisor_preferences"  # input, output
+    STUDENT_ALLOCATIONS = "Student_allocations"  # output
+    PROJECT_ALLOCATIONS = "Project_allocations"  # output
+    INFORMATION = "Information"  # output
 
 
-class InputSheetHeadings(object):
+class SheetHeadings(object):
     """
     Column headings within the input spreadsheet.
     """
     PROJECT_NAME = "Project_name"
     MAX_NUMBER_OF_STUDENTS = "Max_number_of_students"
-
-
-# =============================================================================
-# Helper functions
-# =============================================================================
-
-def sum_of_integers_in_inclusive_range(a: int, b: int) -> int:
-    """
-    Returns the sum of all integers in the range ``[a, b]``, i.e. from ``a`` to
-    ``b`` inclusive.
-    
-    See
-    
-    - https://math.stackexchange.com/questions/1842152/finding-the-sum-of-numbers-between-any-two-given-numbers
-    """  # noqa
-    return int((b - a + 1) * (a + b) / 2)
-
-
-def n_permutations(n: int, k: int) -> int:
-    """
-    Returns the number of permutations of length ``k`` from a list of length
-    ``n``.
-
-    See https://en.wikipedia.org/wiki/Permutation#k-permutations_of_n.
-    """
-    assert n > 0 and 0 < k <= n
-    return int(factorial(n) / factorial(n - k))
 
 
 # =============================================================================
@@ -179,12 +151,12 @@ class Preferences(object):
           a preference for rank #1 and rank #2, you have expressed a total
           dissatisfaction of 3.)
         """
-        self.n_options = n_options
-        self.preferences = OrderedDict()  # type: Dict[Any, int]
-        self.owner = owner
-        self.available_dissatisfaction = sum_of_integers_in_inclusive_range(
+        self._n_options = n_options
+        self._preferences = OrderedDict()  # type: Dict[Any, int]
+        self._owner = owner
+        self._available_dissatisfaction = sum_of_integers_in_inclusive_range(
             1, n_options)
-        self.allocated_dissatisfaction = 0
+        self._allocated_dissatisfaction = 0
 
         if preferences:
             for item, rank in preferences.items():
@@ -197,7 +169,7 @@ class Preferences(object):
         """
         String representation.
         """
-        parts = ", ".join(f"{k} → {v}" for k, v in self.preferences.items())
+        parts = ", ".join(f"{k} → {v}" for k, v in self._preferences.items())
         return (
             f"Preferences({parts}; "
             f"unranked options score {self.unranked_item_dissatisfaction})"
@@ -208,7 +180,7 @@ class Preferences(object):
         Sets the total number of options, and ensures that the preferences
         are compatible with this.
         """
-        self.n_options = n_options
+        self._n_options = n_options
         self._validate()
 
     def add(self, item: Any, rank: int, _validate: bool = True) -> None:
@@ -223,18 +195,18 @@ class Preferences(object):
             _validate:
                 Validate immediately?
         """
-        assert item not in self.preferences, (
+        assert item not in self._preferences, (
             f"Can't add same item twice; attempt to re-add {item!r}"
         )
         assert isinstance(rank, int), (
             f"Only integer preferences allowed at present; was {rank!r}"
         )
-        assert rank not in self.preferences.values(), (
+        assert rank not in self._preferences.values(), (
             f"No duplicate dissatisfaction scores allowed at present: "
             f"attempt to re-add rank {rank}"
         )
-        self.preferences[item] = rank
-        self.allocated_dissatisfaction += rank
+        self._preferences[item] = rank
+        self._allocated_dissatisfaction += rank
         if _validate:
             self._validate()
 
@@ -250,11 +222,11 @@ class Preferences(object):
         Raises:
             :exc:`AssertionError` upon failure.
         """
-        assert self.n_options > 0, "No options"
-        for rank in self.preferences.values():
-            assert 1 <= rank <= self.n_options, f"Invalid preference: {rank!r}"
+        assert self._n_options > 0, "No options"
+        for rank in self._preferences.values():
+            assert 1 <= rank <= self._n_options, f"Invalid preference: {rank!r}"
         assert (
-            self.allocated_dissatisfaction <= self.available_dissatisfaction
+            self._allocated_dissatisfaction <= self._available_dissatisfaction
         ), (
             "Dissatisfaction scores add up to more than the maximum"
         )
@@ -265,15 +237,16 @@ class Preferences(object):
         The amount of available "dissatisfaction", not yet allocated to an
         item (see :class:`Preferences`).
         """
-        return self.available_dissatisfaction - self.allocated_dissatisfaction
+        return self._available_dissatisfaction - self._allocated_dissatisfaction
 
     @property
     def unranked_item_dissatisfaction(self) -> Optional[float]:
         """
         The mean "dissatisfaction" (see :class:`Preferences`) for every option
-        without an explicit preference, or ``None`` if there are no such options.
+        without an explicit preference, or ``None`` if there are no such
+        options.
         """
-        n_unranked = self.n_options - len(self.preferences)
+        n_unranked = self._n_options - len(self._preferences)
         return (
             self.unallocated_dissatisfaction / n_unranked
             if n_unranked > 0 else None
@@ -289,7 +262,17 @@ class Preferences(object):
             item:
                 The item to look up.
         """
-        return self.preferences.get(item, self.unranked_item_dissatisfaction)
+        return self._preferences.get(item, self.unranked_item_dissatisfaction)
+
+    def raw_preference(self, item: Any) -> Optional[int]:
+        """
+        Returns the raw preference for an item (for reproducing the input).
+
+        Args:
+            item:
+                The item to look up.
+        """
+        return self._preferences.get(item)  # returns None if absent
 
 
 # =============================================================================
@@ -345,7 +328,8 @@ class Student(object):
 
     def __lt__(self, other: "Student") -> bool:
         """
-        Comparison for sorting. Default sort is by name (case-insensitive).
+        Comparison for sorting, used for console display.
+        Default sort is by case-insensitive name.
         """
         return self.name.lower() < other.name.lower()
 
@@ -393,7 +377,8 @@ class Project(object):
 
     def __lt__(self, other: "Project") -> bool:
         """
-        Comparison for sorting. Default sort is by name (case-insensitive).
+        Comparison for sorting, used for console display.
+        Default sort is by case-insensitive name.
         """
         return self.name.lower() < other.name.lower()
 
@@ -543,7 +528,8 @@ class Solution(object):
 
     def write_xlsx(self, filename: str) -> None:
         """
-        Writes the solution to an Excel XLSX file.
+        Writes the solution to an Excel XLSX file (and its problem, for data
+        safety).
 
         Args:
             filename:
@@ -551,7 +537,10 @@ class Solution(object):
         """
         wb = Workbook(write_only=True)  # doesn't create default sheet
 
-        ss = wb.create_sheet("Student_allocations", index=0)
+        # ---------------------------------------------------------------------
+        # Allocations, by student
+        # ---------------------------------------------------------------------
+        ss = wb.create_sheet(SheetNames.STUDENT_ALLOCATIONS)
         ss.append([
             "Student number",
             "Student name",
@@ -568,7 +557,10 @@ class Solution(object):
                 student.dissatisfaction(project),
             ])
 
-        ps = wb.create_sheet("Project_allocations", index=1)
+        # ---------------------------------------------------------------------
+        # Allocations, by project
+        # ---------------------------------------------------------------------
+        ps = wb.create_sheet(SheetNames.PROJECT_ALLOCATIONS)
         ps.append([
             "Project number",
             "Project name",
@@ -595,7 +587,10 @@ class Solution(object):
                 ", ".join(str(x) for x in supervisor_dissatisfactions),
             ])
 
-        zs = wb.create_sheet("Information", index=3)
+        # ---------------------------------------------------------------------
+        # Software and settings information
+        # ---------------------------------------------------------------------
+        zs = wb.create_sheet(SheetNames.INFORMATION)
         zs_rows = [
             ["SOFTWARE DETAILS"],
             [],
@@ -613,9 +608,25 @@ class Solution(object):
              1 - self.supervisor_weight],
             ["Overall weight given to supervisor preferences",
              self.supervisor_weight],
+            [],
+            ["SUMMARY STATISTICS"],
+            [],
+            ["Student dissatisfaction mean",
+             self.student_dissatisfaction_mean()],
+            ["Student dissatisfaction variance",
+             self.student_dissatisfaction_variance()],
+            ["Supervisor dissatisfaction mean",
+             self.supervisor_dissatisfaction_mean()],
+            ["Supervisor dissatisfaction variance",
+             self.supervisor_dissatisfaction_variance()],
         ]
         for row in zs_rows:
             zs.append(row)
+
+        # ---------------------------------------------------------------------
+        # Problem definition
+        # ---------------------------------------------------------------------
+        self.problem.write_to_xlsx_workbook(wb)
 
         wb.save(filename)
 
@@ -863,30 +874,30 @@ class Problem(object):
         # ---------------------------------------------------------------------
         projects = []  # type: List[Project]
         # These will raise an error if the named sheet does not exist:
-        ws_projects = wb[InputSheetNames.PROJECTS]  # type: Worksheet
+        ws_projects = wb[SheetNames.PROJECTS]  # type: Worksheet
         assert (
             ws_projects.cell(row=1, column=1).value ==
-            InputSheetHeadings.PROJECT_NAME and
+            SheetHeadings.PROJECT_NAME and
             ws_projects.cell(row=1, column=2).value ==
-            InputSheetHeadings.MAX_NUMBER_OF_STUDENTS
+            SheetHeadings.MAX_NUMBER_OF_STUDENTS
         ), (
-            f"Bad headings to worksheet {InputSheetNames.PROJECTS}; expected: "
-            f"{InputSheetHeadings.PROJECT_NAME}, "
-            f"{InputSheetHeadings.MAX_NUMBER_OF_STUDENTS:}"
+            f"Bad headings to worksheet {SheetNames.PROJECTS}; expected: "
+            f"{SheetHeadings.PROJECT_NAME}, "
+            f"{SheetHeadings.MAX_NUMBER_OF_STUDENTS:}"
         )
         for row_number, row in enumerate(ws_projects.iter_rows(min_row=2),
                                          start=2):  # type: int, Sequence[Cell]
             project_number = row_number - 1
             project_name = row[0].value
             assert project_name, (
-                f"Missing project name in {InputSheetNames.PROJECTS} "
+                f"Missing project name in {SheetNames.PROJECTS} "
                 f"row {row_number}"
             )
             try:
                 max_n_students = int(row[1].value)
             except (ValueError, TypeError):
                 raise ValueError(
-                    f"Bad max_n_students in {InputSheetNames.PROJECTS} "
+                    f"Bad max_n_students in {SheetNames.PROJECTS} "
                     f"row {row_number}"
                 )
             projects.append(Project(name=project_name,
@@ -900,22 +911,22 @@ class Problem(object):
         # Students with their preferences
         # ---------------------------------------------------------------------
         students = []  # type: List[Student]
-        ws_students = wb[InputSheetNames.STUDENT_PREFERENCES]  # type: Worksheet  # noqa
+        ws_students = wb[SheetNames.STUDENT_PREFERENCES]  # type: Worksheet  # noqa
         # Check project headings
         assert all(
             ws_students.cell(row=1, column=i + 2).value == projects[i].name
             for i in range(len(projects))
         ), (
-            f"First row of {InputSheetNames.STUDENT_PREFERENCES} sheet "
+            f"First row of {SheetNames.STUDENT_PREFERENCES} sheet "
             f"must contain all project names in the same order as in the "
-            f"{InputSheetNames.PROJECTS} sheet"
+            f"{SheetNames.PROJECTS} sheet"
         )
         # Students
         stp_rows = ws_students.iter_rows(min_row=2)
         for row_number, row in enumerate(stp_rows, start=2):
             student_number = row_number - 1
             assert len(row) == n_projects + 1, (
-                f"In {InputSheetNames.STUDENT_PREFERENCES}, student on row "
+                f"In {SheetNames.STUDENT_PREFERENCES}, student on row "
                 f"{student_number + 1} has a preference row of the wrong "
                 f"length (expected {n_projects + 1})."
             )
@@ -927,7 +938,7 @@ class Problem(object):
                 except (ValueError, TypeError):
                     raise ValueError(
                         f"Bad preference for student {student_name} in "
-                        f"{InputSheetNames.STUDENT_PREFERENCES} "
+                        f"{SheetNames.STUDENT_PREFERENCES} "
                         f"row {row_number}")
                 project = projects[project_number - 1]
                 student_preferences[project] = pref
@@ -942,7 +953,7 @@ class Problem(object):
         # ---------------------------------------------------------------------
         # Supervisor preferences, stored with their project object
         # ---------------------------------------------------------------------
-        ws_supervisorprefs = wb[InputSheetNames.SUPERVISOR_PREFERENCES]  # type: Worksheet  # noqa
+        ws_supervisorprefs = wb[SheetNames.SUPERVISOR_PREFERENCES]  # type: Worksheet  # noqa
         # Accessing cells by (row, column) index is ridiculously slow here, and
         # the time is spent in the internals of openpyxl; specifically, in
         # xml.etree.ElementTree.XMLParser.feed(). That's true even after
@@ -959,18 +970,18 @@ class Problem(object):
             svp_rows[0][i + 1] == projects[i].name
             for i in range(len(projects))
         ), (
-            f"First row of {InputSheetNames.SUPERVISOR_PREFERENCES} sheet "
+            f"First row of {SheetNames.SUPERVISOR_PREFERENCES} sheet "
             f"must contain all project names in the same order as in the "
-            f"{InputSheetNames.PROJECTS} sheet"
+            f"{SheetNames.PROJECTS} sheet"
         )
         # Check student names
         assert (
             svp_rows[i + 1][0] == students[i].name
             for i in range(len(students))
         ), (
-            f"First column of {InputSheetNames.SUPERVISOR_PREFERENCES} sheet "
+            f"First column of {SheetNames.SUPERVISOR_PREFERENCES} sheet "
             f"must contain all student names in the same order as in the "
-            f"{InputSheetNames.STUDENT_PREFERENCES} sheet"
+            f"{SheetNames.STUDENT_PREFERENCES} sheet"
         )
         for pcol, project in enumerate(projects, start=2):
             supervisor_prefs = OrderedDict()  # type: Dict[Student, int]
@@ -981,7 +992,7 @@ class Problem(object):
                 except (ValueError, TypeError):
                     raise ValueError(
                         f"Bad preference at row={srow}, col={pcol} in "
-                        f"{InputSheetNames.SUPERVISOR_PREFERENCES}")
+                        f"{SheetNames.SUPERVISOR_PREFERENCES}")
                 supervisor_prefs[student] = pref
             project.set_supervisor_preferences(
                 n_students=n_students,
@@ -994,6 +1005,53 @@ class Problem(object):
         log.info("... finished reading")
         return Problem(projects=projects, students=students)
 
+    # noinspection DuplicatedCode
+    def write_to_xlsx_workbook(self, wb: Workbook) -> None:
+        """
+        Writes the problem data to a spreadsheet (so it can be saved alongside
+        the solution).
+
+        Args:
+            wb:
+                A :class:`openpyxl.workbook.workbook.Workbook` to which to
+                write.
+        """
+        sorted_projects = self.sorted_projects()
+        sorted_students = self.sorted_students()
+
+        project_sheet = wb.create_sheet(SheetNames.PROJECTS)
+        project_sheet.append([
+            SheetHeadings.PROJECT_NAME,
+            SheetHeadings.MAX_NUMBER_OF_STUDENTS
+        ])
+        for p in sorted_projects:
+            project_sheet.append([
+                p.name,
+                p.max_n_students
+            ])
+
+        student_sheet = wb.create_sheet(SheetNames.STUDENT_PREFERENCES)
+        student_sheet.append(
+            [""] + [p.name for p in sorted_projects]
+        )
+        for s in sorted_students:
+            # noinspection PyTypeChecker
+            student_sheet.append(
+                [s.name] + [s.preferences.raw_preference(p)
+                            for p in sorted_projects]
+            )
+
+        supervisor_sheet = wb.create_sheet(SheetNames.SUPERVISOR_PREFERENCES)
+        supervisor_sheet.append(
+            [""] + [p.name for p in sorted_projects]
+        )
+        for s in sorted_students:
+            # noinspection PyTypeChecker
+            supervisor_sheet.append(
+                [s.name] + [p.supervisor_preferences.raw_preference(s)
+                            for p in sorted_projects]
+            )
+
 
 # =============================================================================
 # main
@@ -1003,6 +1061,7 @@ def main() -> None:
     """
     Command-line entry point.
     """
+    # noinspection PyTypeChecker
     parser = argparse.ArgumentParser(
         formatter_class=RawDescriptionArgumentDefaultsHelpFormatter,
         description=f"""
@@ -1012,18 +1071,18 @@ The input spreadsheet should have the following format (in each case, the
 first row is the title row):
 
     Sheet name:
-        {InputSheetNames.PROJECTS}
+        {SheetNames.PROJECTS}
     Description:
         List of projects (one per row) and their student capacity.
     Format:
-        {InputSheetHeadings.PROJECT_NAME}    {InputSheetHeadings.MAX_NUMBER_OF_STUDENTS}
+        {SheetHeadings.PROJECT_NAME}    {SheetHeadings.MAX_NUMBER_OF_STUDENTS}
         Project One     1
         Project Two     1
         Project Three   2
         ...             ...
         
     Sheet name:
-        {InputSheetNames.STUDENT_PREFERENCES}
+        {SheetNames.STUDENT_PREFERENCES}
     Description:
         List of students (one per row) and their rank preferences (1 = top, 2 =
         next, etc.) for projects (one per column).
@@ -1035,7 +1094,7 @@ first row is the title row):
     
     
     Sheet name:
-        {InputSheetNames.SUPERVISOR_PREFERENCES}
+        {SheetNames.SUPERVISOR_PREFERENCES}
     Description:
         List of projects (one per column) and their supervisor's rank
         preferences (1 = top, 2 = next, etc.) for students (one per row).
