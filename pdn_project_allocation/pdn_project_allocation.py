@@ -20,6 +20,10 @@ from typing import (Any, Dict, Generator, List, Optional, Sequence,
 
 from cardinal_pythonlib.argparse_func import RawDescriptionArgumentDefaultsHelpFormatter  # noqa
 from cardinal_pythonlib.logs import main_only_quicksetup_rootlogger
+from cardinal_pythonlib.maths_py import (
+    n_permutations,
+    sum_of_integers_in_inclusive_range,
+)
 from openpyxl.cell import Cell
 from openpyxl.reader.excel import load_workbook
 from openpyxl.workbook.workbook import Workbook
@@ -100,12 +104,18 @@ print(text)
 # =============================================================================
 
 class InputSheetNames(object):
+    """
+    Sheet names within the input spreadsheet.
+    """
     PROJECTS = "Projects"
     STUDENT_PREFERENCES = "Student_preferences"
     SUPERVISOR_PREFERENCES = "Supervisor_preferences"
 
 
 class InputSheetHeadings(object):
+    """
+    Column headings within the input spreadsheet.
+    """
     PROJECT_NAME = "Project_name"
     MAX_NUMBER_OF_STUDENTS = "Max_number_of_students"
 
@@ -153,12 +163,21 @@ class Preferences(object):
         """
         Args:
             n_options:
-                total number of things to be judged
+                Total number of things to be judged.
             preferences:
-                mapping from "thing being judged" to "rank preference" (1 best)
+                Mapping from "thing being judged" to "rank preference" (1 is
+                best).
             owner:
-                person/thing expressing preferences (for cosmetic purposes
-                only)
+                Person/thing expressing preferences (for cosmetic purposes
+                only).
+
+        Other attributes:
+        - ``available_dissatisfaction``: sum of [1 ... ``n_options`]
+        - ``allocated_dissatisfaction``: sum of expressed preference ranks.
+          (For example, if you only pick your top option, with rank 1, then you
+          have expressed a total dissatisfaction of 1. If you have expressed
+          a preference for rank #1 and rank #2, you have expressed a total
+          dissatisfaction of 3.)
         """
         self.n_options = n_options
         self.preferences = OrderedDict()  # type: Dict[Any, int]
@@ -171,22 +190,38 @@ class Preferences(object):
             for item, rank in preferences.items():
                 if rank is not None:
                     self.add(item, rank, _validate=False)
-            self._validate()
+                    # ... defer validation until all data in...
+            self._validate()  # OK, now validate
 
     def __str__(self) -> str:
+        """
+        String representation.
+        """
         parts = ", ".join(f"{k} → {v}" for k, v in self.preferences.items())
         return (
             f"Preferences({parts}; "
-            f"unranked options score {self.unranked_dissatisfaction})"
+            f"unranked options score {self.unranked_item_dissatisfaction})"
         )
 
     def set_n_options(self, n_options: int) -> None:
+        """
+        Sets the total number of options, and ensures that the preferences
+        are compatible with this.
+        """
         self.n_options = n_options
         self._validate()
 
     def add(self, item: Any, rank: int, _validate: bool = True) -> None:
         """
         Add a preference for an item.
+
+        Args:
+            item:
+                Thing for which a preference is being assessed.
+            rank:
+                Integer preference rank (1 best, 2 next, etc.).
+            _validate:
+                Validate immediately?
         """
         assert item not in self.preferences, (
             f"Can't add same item twice; attempt to re-add {item!r}"
@@ -204,6 +239,17 @@ class Preferences(object):
             self._validate()
 
     def _validate(self) -> None:
+        """
+        Validates:
+
+        - that there are some options;
+        - that preferences for all options are in the range [1, ``n_options``];
+        - that the ``allocated_dissatisfaction`` is no more than the
+          ``available_dissatisfaction``.
+
+        Raises:
+            :exc:`AssertionError` upon failure.
+        """
         assert self.n_options > 0, "No options"
         for rank in self.preferences.values():
             assert 1 <= rank <= self.n_options, f"Invalid preference: {rank!r}"
@@ -214,22 +260,36 @@ class Preferences(object):
         )
 
     @property
-    def unranked_dissatisfaction(self) -> Optional[float]:
-        unallocated_dissatisfaction = (
-            self.available_dissatisfaction -
-            self.allocated_dissatisfaction
-        )
+    def unallocated_dissatisfaction(self) -> int:
+        """
+        The amount of available "dissatisfaction", not yet allocated to an
+        item (see :class:`Preferences`).
+        """
+        return self.available_dissatisfaction - self.allocated_dissatisfaction
+
+    @property
+    def unranked_item_dissatisfaction(self) -> Optional[float]:
+        """
+        The mean "dissatisfaction" (see :class:`Preferences`) for every option
+        without an explicit preference, or ``None`` if there are no such options.
+        """
         n_unranked = self.n_options - len(self.preferences)
         return (
-            unallocated_dissatisfaction / n_unranked
+            self.unallocated_dissatisfaction / n_unranked
             if n_unranked > 0 else None
         )
 
     def preference(self, item: Any) -> Union[int, float]:
         """
-        Returns a numerical preference score.
+        Returns a numerical preference score for an item. Will return the
+        "unranked" item dissatisfaction if no preference has been expressed for
+        this particular item.
+
+        Args:
+            item:
+                The item to look up.
         """
-        return self.preferences.get(item, self.unranked_dissatisfaction)
+        return self.preferences.get(item, self.unranked_item_dissatisfaction)
 
 
 # =============================================================================
@@ -248,11 +308,11 @@ class Student(object):
         """
         Args:
             name:
-                student's name
+                Student's name.
             number:
-                row number of student (cosmetic only)
+                Row number of student (cosmetic only).
             preferences:
-                Map from project to rank preference (1 to n_projects
+                Map from project to rank preference (1 to ``n_projects``
                 inclusive).
             n_projects:
                 Total number of projects (for validating inputs).
@@ -266,9 +326,15 @@ class Student(object):
         )
 
     def __str__(self) -> str:
+        """
+        String representation.
+        """
         return f"{self.name} (S#{self.number})"
 
     def description(self) -> str:
+        """
+        Verbose description.
+        """
         return f"{self}: {self.preferences}"
 
     def shortname(self) -> str:
@@ -279,7 +345,7 @@ class Student(object):
 
     def __lt__(self, other: "Student") -> bool:
         """
-        Default sort is by name (case-insensitive).
+        Comparison for sorting. Default sort is by name (case-insensitive).
         """
         return self.name.lower() < other.name.lower()
 
@@ -305,11 +371,11 @@ class Project(object):
         """
         Args:
             name:
-                project name
+                Project name.
             number:
-                project number (cosmetic only; matches input order)
+                Project number (cosmetic only; matches input order).
             max_n_students:
-                maximum number of students supported
+                Maximum number of students supported.
         """
         assert name, "Missing name"
         assert number >= 1, "Bad project number"
@@ -320,11 +386,14 @@ class Project(object):
         self.supervisor_preferences = None  # type: Optional[Preferences]
 
     def __str__(self) -> str:
+        """
+        String representation.
+        """
         return f"{self.name} (P#{self.number})"
 
     def __lt__(self, other: "Project") -> bool:
         """
-        Default sort is by name (case-insensitive).
+        Comparison for sorting. Default sort is by name (case-insensitive).
         """
         return self.name.lower() < other.name.lower()
 
@@ -341,7 +410,7 @@ class Project(object):
                                    n_students: int,
                                    preferences: Dict[Student, int]) -> None:
         """
-        Sets the supervisor's student preferences for a project.
+        Sets the supervisor's preferences about students for a project.
         """
         self.supervisor_preferences = Preferences(
             n_options=n_students,
@@ -372,15 +441,18 @@ class Solution(object):
         """
         Args:
             problem:
-                the :class:`Problem`, defining projects and students
+                The :class:`Problem`, defining projects and students.
             allocation:
-                the mapping of students to projects
+                The mapping of students to projects.
         """
         self.problem = problem
         self.allocation = allocation
         self.supervisor_weight = supervisor_weight
 
     def __str__(self) -> str:
+        """
+        String representation.
+        """
         lines = ["Solution:"]
         for student, project in self._gen_student_project_pairs():
             std = student.dissatisfaction(project)
@@ -472,6 +544,10 @@ class Solution(object):
     def write_xlsx(self, filename: str) -> None:
         """
         Writes the solution to an Excel XLSX file.
+
+        Args:
+            filename:
+                Name of file to write.
         """
         wb = Workbook(write_only=True)  # doesn't create default sheet
 
@@ -571,13 +647,14 @@ class Problem(object):
         """
         Args:
             projects:
-                List of projects
+                List of projects.
             students:
                 List of students, with their project preferences.
 
         Note that the students and projects are put into a "deterministic
         random" order, i.e. deterministically sorted, then shuffled (but with a
-        globally fixed random number generator seed).
+        globally fixed random number generator seed). That ensures fairness and
+        consistency.
         """
         self.projects = projects
         self.students = students
@@ -666,9 +743,10 @@ class Problem(object):
 
         Args:
             supervisor_weight:
-                weight allocated to supervisor preferences
+                Weight allocated to supervisor preferences; range [0, 1].
+                (Student preferences are weighted as 1 minus this.)
             max_time_s:
-                Time limit for optimizer.
+                Time limit for optimizer (s).
         """
         def varname(s_: int, p_: int) -> str:
             """
@@ -697,7 +775,7 @@ class Problem(object):
                 for p in range(n_projects)  # second index
             ]
             for s in range(n_students)  # first index
-        ]
+        ]  # indexed s, p
 
         # Model
         m = Model("Student project allocation")
@@ -709,7 +787,7 @@ class Problem(object):
                 for p in range(n_projects)  # second index
             ]
             for s in range(n_students)  # first index
-        ]
+        ]  # indexed s, p
 
         # Objective: happy students/supervisors
         m.objective = minimize(xsum(
@@ -977,7 +1055,7 @@ first row is the title row):
     parser.add_argument(
         "--supervisor_weight", type=float, default=DEFAULT_SUPERVISOR_WEIGHT,
         help="Weight allocated to supervisor preferences (student preferences "
-             "are weighted (1 minus this)"
+             "are weighted as [1 minus this])"
     )
     parser.add_argument(
         "--maxtime", type=float, default=DEFAULT_MAX_SECONDS,
