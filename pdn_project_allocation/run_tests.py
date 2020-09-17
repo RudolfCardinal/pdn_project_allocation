@@ -10,6 +10,7 @@ import logging
 import os
 import subprocess
 
+from cardinal_pythonlib.cmdline import cmdline_quote
 from cardinal_pythonlib.logs import main_only_quicksetup_rootlogger
 
 log = logging.getLogger(__name__)
@@ -17,7 +18,7 @@ log = logging.getLogger(__name__)
 THISDIR = os.path.dirname(os.path.realpath(__file__))
 PROG = os.path.join(THISDIR, "pdn_project_allocation.py")
 INPUTDIR = os.path.join(THISDIR, "testdata")
-OUTPUTDIR = os.getcwd()
+OUTPUTDIR = os.path.join(THISDIR, os.pardir, "testoutput")
 
 
 def process(infile: str, outfile: str) -> None:
@@ -28,7 +29,7 @@ def process(infile: str, outfile: str) -> None:
         "--output", os.path.join(OUTPUTDIR, outfile),
         # "--power", "3.0",
     ]
-    log.warning(repr(cmdargs))
+    log.warning(cmdline_quote(cmdargs))
     subprocess.check_call(cmdargs)
 
 
@@ -41,6 +42,7 @@ def main() -> None:
     process("test4_n10_multiple_ties.xlsx", "test_out4.xlsx")
     process("test5_mean_vs_variance.xlsx", "test_out5.xlsx")
     process("test6_multiple_students_per_project.xlsx", "test_out6.xlsx")
+    process("test7_eligibility.xlsx", "test_out7.xlsx")
 
 
 if __name__ == "__main__":

@@ -14,6 +14,7 @@ import logging
 import os
 import random
 from statistics import mean, variance
+import sys
 from typing import (Any, Dict, Generator, List, Optional, Sequence,
                     Tuple, Union)
 
@@ -38,9 +39,14 @@ RNG_SEED = 1234  # fixed
 VERY_VERBOSE = False  # debugging option
 
 EXT_XLSX = ".xlsx"
+EXIT_FAILURE = 1
+EXIT_SUCCESS = 0
 
 INPUT_TYPES_SUPPORTED = [EXT_XLSX]
 OUTPUT_TYPES_SUPPORTED = INPUT_TYPES_SUPPORTED
+
+TRUE_VALUES = ["1", "Y", "y", "T", "t"]
+FALSE_VALUES = ["0", "N", "n", "F", "f", ""]
 
 
 # =============================================================================
@@ -103,12 +109,13 @@ class SheetNames(object):
     """
     Sheet names within the input/output spreadsheet file.
     """
+    ELIGIBILITY = "Eligibility"
+    INFORMATION = "Information"  # output
+    PROJECT_ALLOCATIONS = "Project_allocations"  # output
     PROJECTS = "Projects"  # input, output
+    STUDENT_ALLOCATIONS = "Student_allocations"  # output
     STUDENT_PREFERENCES = "Student_preferences"  # input, output
     SUPERVISOR_PREFERENCES = "Supervisor_preferences"  # input, output
-    STUDENT_ALLOCATIONS = "Student_allocations"  # output
-    PROJECT_ALLOCATIONS = "Project_allocations"  # output
-    INFORMATION = "Information"  # output
 
 
 class SheetHeadings(object):
@@ -645,22 +652,124 @@ class Solution(object):
 
 
 # =============================================================================
+# Eligibility helpers
+# =============================================================================
+
+class Eligibility(object):
+    """
+    Simple wrapper around a map between students and projects.
+    """
+
+    def __init__(self,
+                 students: List[Student],
+                 projects: List[Project],
+                 default_eligibility=True) -> None:
+        """
+        Args:
+            projects:
+                All projects.
+            students:
+                All students.
+            default_eligibility:
+                Default value for "is student eligible for project"?
+        """
+        self.students = sorted(students, key=lambda s: s.number)
+        self.projects = sorted(projects, key=lambda p: p.number)
+        self.eligibility = OrderedDict(
+            (
+                s,
+                OrderedDict(
+                    (p, default_eligibility)
+                    for p in projects
+                )
+            )
+            for s in students
+        )
+
+    def __str__(self) -> str:
+        """
+        String representations.
+        """
+        if self.everyone_eligible_for_everything():
+            return "All students eligible for all projects."
+        lines = []  # type: List[str]
+        for s, p_e in self.eligibility.items():
+            projects_str = ", ".join(
+                str(p)
+                for p, e in p_e.items()
+                if e
+            )
+            lines.append(f"{s}: eligible for {projects_str}")
+        return "\n".join(lines)
+
+    def assert_valid(self) -> None:
+        """
+        Perform internal checks, or raise an exception.
+        """
+        # 1. Every student has an eligible project.
+        for s in self.students:
+            assert any(self.is_eligible(s, p) for p in self.projects), (
+                f"Error: student {s} is not eligible for any projects!"
+            )
+        # 2. Every project has an eligible student.
+        for p in self.projects:
+            assert any(self.is_eligible(s, p) for s in self.students), (
+                f"Error: project {p} has no eligible students!"
+            )
+
+    def set_eligibility(self,
+                        student: Student,
+                        project: Project,
+                        eligible: bool):
+        """
+        Set eligibility for a specific student/project combination.
+
+        Args:
+            student: the student
+            project: the project
+            eligible: is the student eligible for the project?
+        """
+        self.eligibility[student][project] = eligible
+
+    def is_eligible(self, student: Student, project: Project) -> bool:
+        """
+        Is the student eligible for the project?
+        """
+        return self.eligibility[student][project]
+
+    def everyone_eligible_for_everything(self) -> bool:
+        """
+        Is this a simple problem in which everyone is eligible for everything?
+        """
+        return all(
+            e
+            for p_e in self.eligibility.values()
+            for e in p_e.values()
+        )
+
+
+# =============================================================================
 # Problem
 # =============================================================================
 
 class Problem(object):
     """
-    Represents the problem (and solves it) -- projects, students.
+    Represents the problem (and solves it) -- projects (with their supervisor's
+    preferences for students), students (with their preferences for projects),
+    and eligibility (which students are allowed to do which project?).
     """
     def __init__(self,
                  projects: List[Project],
-                 students: List[Student]) -> None:
+                 students: List[Student],
+                 eligibility: Eligibility = None) -> None:
         """
         Args:
             projects:
-                List of projects.
+                List of projects (with supervisor preference information).
             students:
-                List of students, with their project preferences.
+                List of students (with their project preferences).
+            eligibility:
+                Dictionary of the form eligibility[student][project] = bool.
 
         Note that the students and projects are put into a "deterministic
         random" order, i.e. deterministically sorted, then shuffled (but with a
@@ -669,6 +778,8 @@ class Problem(object):
         """
         self.projects = projects
         self.students = students
+        self.eligibility = eligibility or Eligibility(students, projects)
+        self.eligibility.assert_valid()
         # Fix the order:
         self.students.sort()
         random.shuffle(self.students)
@@ -683,13 +794,12 @@ class Problem(object):
         students = "\n".join(s.description() for s in self.sorted_students())
         return (
             f"Problem:\n"
-            f"Projects:\n"
             f"\n"
-            f"{projects}\n"
+            f"- Projects:\n\n{projects}\n"
             f"\n"
-            f"Students:\n"
+            f"- Students:\n\n{students}\n"
             f"\n"
-            f"{students}"
+            f"- Eligibility:\n\n{self.eligibility}\n"
         )
 
     def sorted_students(self) -> List[Student]:
@@ -773,6 +883,16 @@ class Problem(object):
             f"and supervisor preferences weight {supervisor_weight}")
         n_students = len(self.students)
         n_projects = len(self.projects)
+
+        # Eligibility map
+        eligible = [
+            [
+                self.eligibility.is_eligible(student, project)
+                for p, project in enumerate(self.projects)  # second index
+            ]
+            for s, student in enumerate(self.students)  # first index
+        ]  # indexed s, p
+
         # Dissatisfaction scores for each project
         # CAUTION: get indexes the right way round!
         weighted_dissatisfaction = [
@@ -794,7 +914,10 @@ class Problem(object):
         # CAUTION: get indexes the right way round!
         x = [
             [
-                m.add_var(varname(s, p), var_type=BINARY)
+                (
+                    m.add_var(varname(s, p), var_type=BINARY)
+                    if eligible[s][p] else None
+                )
                 for p in range(n_projects)  # second index
             ]
             for s in range(n_students)  # first index
@@ -805,15 +928,20 @@ class Problem(object):
             x[s][p] * weighted_dissatisfaction[s][p]
             for p in range(n_projects)
             for s in range(n_students)
+            if eligible[s][p]
         ))
 
         # Constraints
-        # - For each student, exactly one project
+        # - For each student, exactly one project:
         for s in range(n_students):
-            m += xsum(x[s][p] for p in range(n_projects)) == 1
-        # - For each project, up to the maximum number of students
+            m += xsum(x[s][p]
+                      for p in range(n_projects)
+                      if eligible[s][p]) == 1
+        # - For each project, up to the maximum number of students:
         for p, project in enumerate(self.projects):
-            m += xsum(x[s][p] for s in range(n_students)) <= project.max_n_students  # noqa
+            m += xsum(x[s][p]
+                      for s in range(n_students)
+                      if eligible[s][p]) <= project.max_n_students
 
         # Optimize
         m.optimize(max_seconds=max_time_s)
@@ -828,7 +956,7 @@ class Problem(object):
         project_indexes = [
             next(p for p in range(n_projects)
                  # if m.var_by_name(varname(s, p)).x >= ALMOST_ONE)
-                 if x[s][p].x >= ALMOST_ONE)
+                 if eligible[s][p] and x[s][p].x >= ALMOST_ONE)
             # ... note that the value of a solved variable is var.x
             # If those two expressions are not the same, there's a bug.
             for s in range(n_students)
@@ -860,6 +988,7 @@ class Problem(object):
             raise ValueError(
                 f"Don't know how to read file type {ext!r} for {filename!r}")
 
+    # noinspection DuplicatedCode
     @classmethod
     def read_data_xlsx(cls, filename: str) -> "Problem":
         """
@@ -872,6 +1001,7 @@ class Problem(object):
         # ---------------------------------------------------------------------
         # Projects
         # ---------------------------------------------------------------------
+
         projects = []  # type: List[Project]
         # These will raise an error if the named sheet does not exist:
         ws_projects = wb[SheetNames.PROJECTS]  # type: Worksheet
@@ -910,6 +1040,7 @@ class Problem(object):
         # ---------------------------------------------------------------------
         # Students with their preferences
         # ---------------------------------------------------------------------
+
         students = []  # type: List[Student]
         ws_students = wb[SheetNames.STUDENT_PREFERENCES]  # type: Worksheet  # noqa
         # Check project headings
@@ -927,7 +1058,7 @@ class Problem(object):
             student_number = row_number - 1
             assert len(row) == n_projects + 1, (
                 f"In {SheetNames.STUDENT_PREFERENCES}, student on row "
-                f"{student_number + 1} has a preference row of the wrong "
+                f"{row_number} has a preference row of the wrong "
                 f"length (expected {n_projects + 1})."
             )
             student_name = row[0].value
@@ -946,6 +1077,7 @@ class Problem(object):
                                     number=student_number,
                                     preferences=student_preferences,
                                     n_projects=n_projects))
+        del stp_rows
         n_students = len(students)
         log.info(f"Number of students: {n_students}")
         assert n_students >= 1
@@ -953,6 +1085,7 @@ class Problem(object):
         # ---------------------------------------------------------------------
         # Supervisor preferences, stored with their project object
         # ---------------------------------------------------------------------
+
         ws_supervisorprefs = wb[SheetNames.SUPERVISOR_PREFERENCES]  # type: Worksheet  # noqa
         # Accessing cells by (row, column) index is ridiculously slow here, and
         # the time is spent in the internals of openpyxl; specifically, in
@@ -975,7 +1108,7 @@ class Problem(object):
             f"{SheetNames.PROJECTS} sheet"
         )
         # Check student names
-        assert (
+        assert all(
             svp_rows[i + 1][0] == students[i].name
             for i in range(len(students))
         ), (
@@ -983,6 +1116,7 @@ class Problem(object):
             f"must contain all student names in the same order as in the "
             f"{SheetNames.STUDENT_PREFERENCES} sheet"
         )
+        # Read preferences
         for pcol, project in enumerate(projects, start=2):
             supervisor_prefs = OrderedDict()  # type: Dict[Student, int]
             for srow, student in enumerate(students, start=2):
@@ -998,12 +1132,64 @@ class Problem(object):
                 n_students=n_students,
                 preferences=supervisor_prefs
             )
+        del svp_rows
+
+        # ---------------------------------------------------------------------
+        # Eligibility
+        # ---------------------------------------------------------------------
+
+        eligibility = Eligibility(students=students,
+                                  projects=projects,
+                                  default_eligibility=True)
+        if SheetNames.ELIGIBILITY in wb:
+            ws_eligibility = wb[SheetNames.ELIGIBILITY]
+            el_rows = [
+                [cell.value for cell in row]
+                for row in ws_eligibility.iter_rows()
+            ]  # index as : el_rows[row_zero_based][column_zero_based]
+            # Check project headings
+            assert all(
+                el_rows[0][i + 1] == projects[i].name
+                for i in range(len(projects))
+            ), (
+                f"First row of {SheetNames.ELIGIBILITY} sheet "
+                f"must contain all project names in the same order as in the "
+                f"{SheetNames.PROJECTS} sheet"
+            )
+            # Check student names
+            assert all(
+                el_rows[i + 1][0] == students[i].name
+                for i in range(len(students))
+            ), (
+                f"First column of {SheetNames.ELIGIBILITY} sheet "
+                f"must contain all student names in the same order as in the "
+                f"{SheetNames.STUDENT_PREFERENCES} sheet"
+            )
+            # Read eligibility
+            for pcol, project in enumerate(projects, start=2):
+                for srow, student in enumerate(students, start=2):
+                    eligibility_str = str(el_rows[srow - 1][pcol - 1])
+                    if eligibility_str in TRUE_VALUES:
+                        eligible = True
+                    elif eligibility_str in FALSE_VALUES:
+                        eligible = False
+                    else:
+                        raise ValueError(
+                            f"Eligibility value {eligibility_str!r} is "
+                            f"invalid; use one of {TRUE_VALUES} "
+                            f"for 'eligible' or one of {FALSE_VALUES} "
+                            f"for 'ineligible'."
+                        )
+                    eligibility.set_eligibility(student, project, eligible)
+            del el_rows
 
         # ---------------------------------------------------------------------
         # Create and return the Problem object
         # ---------------------------------------------------------------------
         log.info("... finished reading")
-        return Problem(projects=projects, students=students)
+        return Problem(projects=projects,
+                       students=students,
+                       eligibility=eligibility)
 
     # noinspection DuplicatedCode
     def write_to_xlsx_workbook(self, wb: Workbook) -> None:
@@ -1019,6 +1205,10 @@ class Problem(object):
         sorted_projects = self.sorted_projects()
         sorted_students = self.sorted_students()
 
+        # ---------------------------------------------------------------------
+        # Projects
+        # ---------------------------------------------------------------------
+
         project_sheet = wb.create_sheet(SheetNames.PROJECTS)
         project_sheet.append([
             SheetHeadings.PROJECT_NAME,
@@ -1029,6 +1219,10 @@ class Problem(object):
                 p.name,
                 p.max_n_students
             ])
+
+        # ---------------------------------------------------------------------
+        # Students
+        # ---------------------------------------------------------------------
 
         student_sheet = wb.create_sheet(SheetNames.STUDENT_PREFERENCES)
         student_sheet.append(
@@ -1041,6 +1235,10 @@ class Problem(object):
                             for p in sorted_projects]
             )
 
+        # ---------------------------------------------------------------------
+        # Supervisor preferences
+        # ---------------------------------------------------------------------
+
         supervisor_sheet = wb.create_sheet(SheetNames.SUPERVISOR_PREFERENCES)
         supervisor_sheet.append(
             [""] + [p.name for p in sorted_projects]
@@ -1049,6 +1247,21 @@ class Problem(object):
             # noinspection PyTypeChecker
             supervisor_sheet.append(
                 [s.name] + [p.supervisor_preferences.raw_preference(s)
+                            for p in sorted_projects]
+            )
+
+        # ---------------------------------------------------------------------
+        # Eligibility
+        # ---------------------------------------------------------------------
+
+        eligibility_sheet = wb.create_sheet(SheetNames.ELIGIBILITY)
+        eligibility_sheet.append(
+            [""] + [p.name for p in sorted_projects]
+        )
+        for s in sorted_students:
+            # noinspection PyTypeChecker
+            eligibility_sheet.append(
+                [s.name] + [int(self.eligibility.is_eligible(s, p))
                             for p in sorted_projects]
             )
 
@@ -1092,6 +1305,18 @@ first row is the title row):
         Mr Jones        2               1               3               ...
         ...             ...             ...             ...             ...
     
+    Sheet name:
+        {SheetNames.ELIGIBILITY}
+    Description:
+        OPTIONAL sheet, showing which students are eligible for which
+        projects. If absent, all students are eligible for all projects.
+        Use {TRUE_VALUES} for "eligible".
+        Use {FALSE_VALUES} for "ineligible".
+    Format:
+        <ignored>       Project One     Project Two     Project Three   ...
+        Miss Smith      1               1               1               ...
+        Mr Jones        1               0               1               ...
+        ...             ...             ...             ...             ...
     
     Sheet name:
         {SheetNames.SUPERVISOR_PREFERENCES}
@@ -1148,11 +1373,12 @@ first row is the title row):
         solution.write_data(args.output)
     else:
         log.warning("Output not saved. Specify the --output option for that.")
+    sys.exit(EXIT_SUCCESS)
 
 
 if __name__ == "__main__":
     try:
         main()
-    except Exception as e:
-        log.critical(str(e))
-        raise
+    except Exception as _top_level_exception:
+        log.critical(str(_top_level_exception))
+        sys.exit(EXIT_FAILURE)
