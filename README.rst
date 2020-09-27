@@ -49,30 +49,23 @@ Description of the problem
 
 - Every project can take a certain project-specific number of students.
 
-- Projects are represented by integers from 1...``p``.
-
 - Students rank projects from 1 (most preferred) upwards, as integers.
 
-- In original task specification, they could rank up to 5 projects, but no
-  reason not to extend that. (Indifference between any projects not ranked.)
+  - In original task specification, they could rank up to 5 projects, but no
+    reason not to extend that.
 
-- If they don't rank enough, they are treated as being indifferent between
-  them (meaning that the program will maximize everyone else's satisfaction
-  without regard to them).
+  - If they don't rank enough, they are treated as being indifferent between
+    all other projects.
 
 - Output must be consistent across runs, and consistent against re-ordering of
-  students in the input data. There will be a need to break ties randomly, e.g.
-  in the case of two projects with both students ranking the first project top.
-  Consistency is important and lack of bias (e.g. alphabetical bias) is
-  important, so we (a) set a consistent random number seed; (b)
-  deterministically and then randomly sort the students; (c) run the optimizer.
-  This gives consistent results and does not depend on e.g. alphabetical
-  ordering, who comes first in the spreadsheet, etc. (No such effort is applied
-  to project ordering.)
+  students in the input data.
 
-- Supervisors can also express preferences.
-  The overall balance between "student satisfaction" and "supervisor
-  satisfaction" is set by a parameter (default: equal weighting).
+- Supervisors can also express preferences. The overall balance between
+  "student satisfaction" and "supervisor satisfaction" is set by a parameter.
+
+- Some student/project combinations can be marked as ineligible (e.g. student
+  doesn't have the necessary background, no matter how much they might want
+  the project).
 
 
 Methods
@@ -94,8 +87,21 @@ Slightly tricky question: optimizing mean versus variance.
   mean (dis)satisfaction. I've not found a good example of this. Optimizing
   mean happiness seems to be fine.
 
-Since moving to a MILP method (see below), we just optimize total weighted
-dissatisfaction.
+- Since moving to a MILP method (see below), we just optimize total weighted
+  dissatisfaction.
+
+Consistency:
+
+- For the old brute-force approach, there was a need to break ties randomly,
+  e.g. in the case of two projects with both students ranking the first project
+  top. Consistency is important and lack of bias (e.g. alphabetical bias) is
+  important, so we (a) set a consistent random number seed; (b)
+  deterministically and then randomly sort the students; (c) run the optimizer.
+  This gives consistent results and does not depend on e.g. alphabetical
+  ordering, who comes first in the spreadsheet, etc. (No such effort is applied
+  to project ordering.)
+
+- The new MILP method also seems to be consistent.
 
 
 Changelog
