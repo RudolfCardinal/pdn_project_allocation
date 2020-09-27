@@ -40,16 +40,16 @@ This produces solutions to match the test data in the
 ``pdn_project_allocation/testdata`` directory.
 
 
-Description
------------
+Description of the problem
+--------------------------
 
-- There are a number of projects p, and a number of students s.
+- There are a number of projects ``p``, and a number of students ``s``.
 
 - Every student needs exactly 1 project.
 
 - Every project can take a certain project-specific number of students.
 
-- Projects are represented by integers from 1...p.
+- Projects are represented by integers from 1...``p``.
 
 - Students rank projects from 1 (most preferred) upwards, as integers.
 
@@ -70,6 +70,14 @@ Description
   ordering, who comes first in the spreadsheet, etc. (No such effort is applied
   to project ordering.)
 
+- Supervisors can also express preferences.
+  The overall balance between "student satisfaction" and "supervisor
+  satisfaction" is set by a parameter (default: equal weighting).
+
+
+Methods
+-------
+
 Slightly tricky question: optimizing mean versus variance.
 
 - Dissatisfaction mean: lower is better, all else being equal.
@@ -83,14 +91,11 @@ Slightly tricky question: optimizing mean versus variance.
   "consistently bad".
 
 - The choice depends whether greater equality can outweight slightly worse
-  mean (dis)satisfaction.
+  mean (dis)satisfaction. I've not found a good example of this. Optimizing
+  mean happiness seems to be fine.
 
-  - CURRENTLY EXPERIMENTING WITH test4*.csv -- NOT ACHIEVED YET! Optimizing
-    mean happiness seems to be fine.
-
-- Supervisors can now also express preferences for students.
-  The overall balance between "student satisfaction" and "supervisor
-  satisfaction" is set by a parameter (default: equal weighting).
+Since moving to a MILP method (see below), we just optimize total weighted
+dissatisfaction.
 
 
 Changelog
