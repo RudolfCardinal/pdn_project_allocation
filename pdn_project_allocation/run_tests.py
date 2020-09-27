@@ -9,6 +9,7 @@ Run tests for pdn_project_allocation.
 import logging
 import os
 import subprocess
+from typing import List
 
 from cardinal_pythonlib.cmdline import cmdline_quote
 from cardinal_pythonlib.logs import main_only_quicksetup_rootlogger
@@ -21,7 +22,8 @@ INPUTDIR = os.path.join(THISDIR, "testdata")
 OUTPUTDIR = os.path.join(THISDIR, os.pardir, "testoutput")
 
 
-def process(infile: str, outfile: str) -> None:
+def process(infile: str, outfile: str,
+            other_options: List[str] = None) -> None:
     cmdargs = [
         "python",
         PROG,
@@ -29,6 +31,8 @@ def process(infile: str, outfile: str) -> None:
         "--output", os.path.join(OUTPUTDIR, outfile),
         # "--power", "3.0",
     ]
+    if other_options:
+        cmdargs += other_options
     log.warning(cmdline_quote(cmdargs))
     subprocess.check_call(cmdargs)
 
@@ -43,6 +47,8 @@ def main() -> None:
     process("test5_mean_vs_variance.xlsx", "test_out5.xlsx")
     process("test6_multiple_students_per_project.xlsx", "test_out6.xlsx")
     process("test7_eligibility.xlsx", "test_out7.xlsx")
+    process("test8_tied_preferences.xlsx", "test_out8.xlsx",
+            ["--allow_supervisor_preference_ties"])
 
 
 if __name__ == "__main__":

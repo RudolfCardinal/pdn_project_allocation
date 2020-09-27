@@ -22,6 +22,7 @@ from cardinal_pythonlib.argparse_func import RawDescriptionArgumentDefaultsHelpF
 from cardinal_pythonlib.logs import main_only_quicksetup_rootlogger
 from cardinal_pythonlib.maths_py import sum_of_integers_in_inclusive_range
 from openpyxl.cell import Cell
+from openpyxl.cell.read_only import EmptyCell
 from openpyxl.reader.excel import load_workbook
 from openpyxl.workbook.workbook import Workbook
 from openpyxl.worksheet.worksheet import Worksheet
@@ -127,6 +128,27 @@ class SheetHeadings(object):
 
 
 # =============================================================================
+# Helper functions
+# =============================================================================
+
+def mismatch(actual: List[Any], expected: List[Any]) -> str:
+    """
+    Provides text to locate a mismatch between two lists.
+    """
+    n_actual = len(actual)
+    n_intended = len(expected)
+    if n_actual != n_intended:
+        return (
+            f"Wrong length: actual has length {n_actual}, "
+            f"intended has length {n_intended}"
+        )
+    for i in range(n_actual):
+        if actual[i] != expected[i]:
+            return f"Found {actual[i]!r} where {expected[i]!r} was expected"
+    return ""
+
+
+# =============================================================================
 # Preferences
 # =============================================================================
 
@@ -137,18 +159,22 @@ class Preferences(object):
     """
     def __init__(self,
                  n_options: int,
-                 preferences: Dict[Any, int] = None,
-                 owner: Any = None) -> None:
+                 preferences: Dict[Any, Union[int, float]] = None,
+                 owner: Any = None,
+                 allow_ties: bool = False) -> None:
         """
         Args:
             n_options:
                 Total number of things to be judged.
             preferences:
                 Mapping from "thing being judged" to "rank preference" (1 is
-                best).
+                best). If ``allow_ties`` is set, allows "2.5" for "joint
+                second/third"; otherwise, they must be integer.
             owner:
                 Person/thing expressing preferences (for cosmetic purposes
                 only).
+            allow_ties:
+                Allows ties to be expressed.
 
         Other attributes:
         - ``available_dissatisfaction``: sum of [1 ... ``n_options`]
@@ -159,11 +185,12 @@ class Preferences(object):
           dissatisfaction of 3.)
         """
         self._n_options = n_options
-        self._preferences = OrderedDict()  # type: Dict[Any, int]
+        self._preferences = OrderedDict()  # type: Dict[Any, Union[int, float]]
         self._owner = owner
         self._available_dissatisfaction = sum_of_integers_in_inclusive_range(
             1, n_options)
         self._allocated_dissatisfaction = 0
+        self._allow_ties = allow_ties
 
         if preferences:
             for item, rank in preferences.items():
@@ -190,7 +217,7 @@ class Preferences(object):
         self._n_options = n_options
         self._validate()
 
-    def add(self, item: Any, rank: int, _validate: bool = True) -> None:
+    def add(self, item: Any, rank: float, _validate: bool = True) -> None:
         """
         Add a preference for an item.
 
@@ -202,16 +229,19 @@ class Preferences(object):
             _validate:
                 Validate immediately?
         """
-        assert item not in self._preferences, (
-            f"Can't add same item twice; attempt to re-add {item!r}"
-        )
-        assert isinstance(rank, int), (
-            f"Only integer preferences allowed at present; was {rank!r}"
-        )
-        assert rank not in self._preferences.values(), (
-            f"No duplicate dissatisfaction scores allowed at present: "
-            f"attempt to re-add rank {rank}"
-        )
+        if not self._allow_ties:
+            assert item not in self._preferences, (
+                f"Can't add same item twice (when allow_ties is False); "
+                f"attempt to re-add {item!r}"
+            )
+            assert isinstance(rank, int), (
+                f"Only integer preferences allowed "
+                f"(when allow_ties is False); was {rank!r}"
+            )
+            assert rank not in self._preferences.values(), (
+                f"No duplicate dissatisfaction scores allowed (when "
+                f"allow_ties is False)): attempt to re-add rank {rank}"
+            )
         self._preferences[item] = rank
         self._allocated_dissatisfaction += rank
         if _validate:
@@ -231,11 +261,27 @@ class Preferences(object):
         """
         assert self._n_options > 0, "No options"
         for rank in self._preferences.values():
-            assert 1 <= rank <= self._n_options, f"Invalid preference: {rank!r}"
+            assert 1 <= rank <= self._n_options, (
+                f"Invalid preference: {rank!r} "
+                f"(must be in range [1, {self._n_options}]"
+            )
+        n_expressed = len(self._preferences)
+        expected_allocation = sum_of_integers_in_inclusive_range(
+            1, n_expressed)
+        assert self._allocated_dissatisfaction == expected_allocation, (
+            f"Dissatisfaction scores add up to "
+            f"{self._allocated_dissatisfaction}, but must add up to "
+            f"{expected_allocation}, since you have expressed "
+            f"{n_expressed} preferences (you can only express the 'top n' "
+            f"preferences)"
+        )
         assert (
             self._allocated_dissatisfaction <= self._available_dissatisfaction
         ), (
-            "Dissatisfaction scores add up to more than the maximum"
+            f"Dissatisfaction scores add up to "
+            f"{self._allocated_dissatisfaction}, which is more than the "
+            f"maximum available of {self._available_dissatisfaction} "
+            f"(for {self._n_options} options)"
         )
 
     @property
@@ -244,7 +290,7 @@ class Preferences(object):
         The amount of available "dissatisfaction", not yet allocated to an
         item (see :class:`Preferences`).
         """
-        return self._available_dissatisfaction - self._allocated_dissatisfaction
+        return self._available_dissatisfaction - self._allocated_dissatisfaction  # noqa
 
     @property
     def unranked_item_dissatisfaction(self) -> Optional[float]:
@@ -294,7 +340,8 @@ class Student(object):
                  name: str,
                  number: int,
                  preferences: Dict["Project", int],
-                 n_projects: int) -> None:
+                 n_projects: int,
+                 allow_ties: bool = False) -> None:
         """
         Args:
             name:
@@ -306,6 +353,8 @@ class Student(object):
                 inclusive).
             n_projects:
                 Total number of projects (for validating inputs).
+            allow_ties:
+                Allow ties in preferences?
         """
         self.name = name
         self.number = number
@@ -313,6 +362,7 @@ class Student(object):
             n_options=n_projects,
             preferences=preferences,
             owner=self,
+            allow_ties=allow_ties
         )
 
     def __str__(self) -> str:
@@ -400,14 +450,16 @@ class Project(object):
 
     def set_supervisor_preferences(self,
                                    n_students: int,
-                                   preferences: Dict[Student, int]) -> None:
+                                   preferences: Dict[Student, int],
+                                   allow_ties: bool = False) -> None:
         """
         Sets the supervisor's preferences about students for a project.
         """
         self.supervisor_preferences = Preferences(
             n_options=n_students,
             owner=self,
-            preferences=preferences
+            preferences=preferences,
+            allow_ties=allow_ties
         )
 
     def dissatisfaction(self, student: Student) -> float:
@@ -975,24 +1027,51 @@ class Problem(object):
         log.debug("\n".join(lines))
 
     @classmethod
-    def read_data(cls, filename: str) -> "Problem":
+    def read_data(cls,
+                  filename: str,
+                  allow_student_preference_ties: bool = False,
+                  allow_supervisor_preference_ties: bool = False) -> "Problem":
         """
         Reads a file, autodetecting its format, and returning the
         :class:`Problem`.
+
+        Args:
+            filename:
+                File to read.
+            allow_student_preference_ties:
+                Allow students to express preference ties?
+            allow_supervisor_preference_ties:
+                Allow supervisors to express preference ties?
         """
         # File type?
         _, ext = os.path.splitext(filename)
         if ext == EXT_XLSX:
-            return cls.read_data_xlsx(filename)
+            return cls.read_data_xlsx(
+                filename,
+                allow_student_preference_ties=allow_student_preference_ties,
+                allow_supervisor_preference_ties=allow_supervisor_preference_ties  # noqa
+            )
         else:
             raise ValueError(
                 f"Don't know how to read file type {ext!r} for {filename!r}")
 
     # noinspection DuplicatedCode
     @classmethod
-    def read_data_xlsx(cls, filename: str) -> "Problem":
+    def read_data_xlsx(cls,
+                       filename: str,
+                       allow_student_preference_ties: bool = False,
+                       allow_supervisor_preference_ties: bool = False) \
+            -> "Problem":
         """
         Reads a :class:`Problem` from an Excel XLSX file.
+
+        Args:
+            filename:
+                File to read.
+            allow_student_preference_ties:
+                Allow students to express preference ties?
+            allow_supervisor_preference_ties:
+                Allow supervisors to express preference ties?
         """
         log.info(f"Reading XLSX file: {filename}")
         wb = load_workbook(filename, read_only=True, keep_vba=False,
@@ -1015,10 +1094,15 @@ class Problem(object):
             f"{SheetHeadings.PROJECT_NAME}, "
             f"{SheetHeadings.MAX_NUMBER_OF_STUDENTS:}"
         )
+        log.debug(f"Projects: max_row = {ws_projects.max_row}")
+        # ... may be 1048576 for spreadsheets created in Excel
         for row_number, row in enumerate(ws_projects.iter_rows(min_row=2),
                                          start=2):  # type: int, Sequence[Cell]
             project_number = row_number - 1
             project_name = row[0].value
+            if all(isinstance(_, EmptyCell) for _ in row):
+                # log.warning(f"Projects: skipping blank row {row_number}")
+                continue
             assert project_name, (
                 f"Missing project name in {SheetNames.PROJECTS} "
                 f"row {row_number}"
@@ -1065,7 +1149,7 @@ class Problem(object):
             student_preferences = OrderedDict()  # type: Dict[Project, int]
             for project_number, cell in enumerate(row[1:], start=1):
                 try:
-                    pref = int(cell.value) if cell.value else None
+                    pref = cell.value or None
                 except (ValueError, TypeError):
                     raise ValueError(
                         f"Bad preference for student {student_name} in "
@@ -1076,7 +1160,8 @@ class Problem(object):
             students.append(Student(name=student_name,
                                     number=student_number,
                                     preferences=student_preferences,
-                                    n_projects=n_projects))
+                                    n_projects=n_projects,
+                                    allow_ties=allow_student_preference_ties))
         del stp_rows
         n_students = len(students)
         log.info(f"Number of students: {n_students}")
@@ -1099,6 +1184,12 @@ class Problem(object):
         ]  # index as : svp_rows[row_zero_based][column_zero_based]
 
         # Check project headings
+        assert len(svp_rows[0]) == 1 + len(projects), (
+            f"First row of of {SheetNames.SUPERVISOR_PREFERENCES} should have "
+            f"{1 + len(projects)} columns (one on the left for student names "
+            f"plus {len(projects)} columns for projects). Yours has "
+            f"{len(svp_rows[0])}."
+        )
         assert all(
             svp_rows[0][i + 1] == projects[i].name
             for i in range(len(projects))
@@ -1108,21 +1199,21 @@ class Problem(object):
             f"{SheetNames.PROJECTS} sheet"
         )
         # Check student names
-        assert all(
-            svp_rows[i + 1][0] == students[i].name
-            for i in range(len(students))
-        ), (
+        _from_sheet = [svp_rows[i + 1][0] for i in range(len(students))]
+        _from_students = [students[i].name for i in range(len(students))]
+        assert _from_sheet == _from_students, (
             f"First column of {SheetNames.SUPERVISOR_PREFERENCES} sheet "
             f"must contain all student names in the same order as in the "
-            f"{SheetNames.STUDENT_PREFERENCES} sheet"
+            f"{SheetNames.STUDENT_PREFERENCES} sheet. Mismatch is: "
+            f"{mismatch(_from_sheet, _from_students)}"
         )
         # Read preferences
         for pcol, project in enumerate(projects, start=2):
             supervisor_prefs = OrderedDict()  # type: Dict[Student, int]
             for srow, student in enumerate(students, start=2):
-                pref_str = svp_rows[srow - 1][pcol - 1]
+                pref_value = svp_rows[srow - 1][pcol - 1]
                 try:
-                    pref = int(pref_str) if pref_str else None
+                    pref = pref_value or None
                 except (ValueError, TypeError):
                     raise ValueError(
                         f"Bad preference at row={srow}, col={pcol} in "
@@ -1130,7 +1221,8 @@ class Problem(object):
                 supervisor_prefs[student] = pref
             project.set_supervisor_preferences(
                 n_students=n_students,
-                preferences=supervisor_prefs
+                preferences=supervisor_prefs,
+                allow_ties=allow_supervisor_preference_ties
             )
         del svp_rows
 
@@ -1351,6 +1443,16 @@ first row is the title row):
              "Output types supported: " + str(OUTPUT_TYPES_SUPPORTED)
     )
     parser.add_argument(
+        "--allow_student_preference_ties", action="store_true",
+        help="Allow students to express tied preferences "
+             "(e.g. 2.5 for joint second/third place)?"
+    )
+    parser.add_argument(
+        "--allow_supervisor_preference_ties", action="store_true",
+        help="Allow supervisors to express tied preferences "
+             "(e.g. 2.5 for joint second/third place)?"
+    )
+    parser.add_argument(
         "--verbose", action="store_true",
         help="Be verbose"
     )
@@ -1362,7 +1464,11 @@ first row is the title row):
     random.seed(RNG_SEED)
 
     # Go
-    problem = Problem.read_data(args.filename)
+    problem = Problem.read_data(
+        args.filename,
+        allow_student_preference_ties=args.allow_student_preference_ties,
+        allow_supervisor_preference_ties=args.allow_supervisor_preference_ties,
+    )
     log.info(problem)
     solution = problem.best_solution(
         supervisor_weight=args.supervisor_weight,
