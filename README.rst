@@ -100,7 +100,7 @@ Changelog
 
   - Representations.
   - Brute force method.
-  - MIP method: Mixed Integer Linear Programming Problems.
+  - MIP (MILP) method: Mixed Integer Linear Programming Problems.
   - Output.
 
 - 2019-11-01:
@@ -126,3 +126,22 @@ Changelog
     which is fine. With 60 students and 60 projects, then it will examine up to
     8320987112741389895059729406044653910769502602349791711277558941745407315941523456
     = 8.3e81).
+
+- 2020-09-11:
+
+  - Save input data with output.
+  - Change default weight to favour students (over supervisors).
+
+- 2020-09-17:
+
+  - Support eligibility.
+  - Bugfix to data input checking.
+
+- 2020-09-27, v1.1.0:
+
+  - Option to exponentiate preferences.
+  - Configure behaviour for missing eligibility values.
+  - Allow projects that permit no students.
+  - Show project popularity.
+  - Handle Excel sheets that appear to have 1048576 rows (always).
+  - Tested with real data.
