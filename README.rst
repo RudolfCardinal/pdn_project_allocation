@@ -1,3 +1,7 @@
+.. README.rst
+
+.. _Meld: https://meldmerge.org/
+
 pdn_project_allocation
 ======================
 
@@ -156,3 +160,4 @@ Changelog
   - Show project popularity.
   - Handle Excel sheets that appear to have 1048576 rows (always).
   - Tested with real data.
+  - Speed up spreadsheet reading; student CSV output (e.g. for Meld_).
