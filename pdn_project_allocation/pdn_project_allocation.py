@@ -11,6 +11,7 @@ import argparse
 from collections import OrderedDict
 import datetime
 import logging
+import operator
 import os
 import random
 from statistics import mean, variance
@@ -21,8 +22,8 @@ from typing import (Any, Dict, Generator, List, Optional, Sequence,
 from cardinal_pythonlib.argparse_func import RawDescriptionArgumentDefaultsHelpFormatter  # noqa
 from cardinal_pythonlib.logs import main_only_quicksetup_rootlogger
 from cardinal_pythonlib.maths_py import sum_of_integers_in_inclusive_range
+from cardinal_pythonlib.cmdline import cmdline_quote
 from openpyxl.cell import Cell
-from openpyxl.cell.read_only import EmptyCell
 from openpyxl.reader.excel import load_workbook
 from openpyxl.workbook.workbook import Workbook
 from openpyxl.worksheet.worksheet import Worksheet
@@ -30,8 +31,8 @@ from mip import BINARY, minimize, Model, xsum
 
 log = logging.getLogger(__name__)
 
-VERSION = "1.0.1"
-VERSION_DATE = "2020-09-11"
+VERSION = "1.1.0"
+VERSION_DATE = "2020-09-27"
 
 ALMOST_ONE = 0.99
 DEFAULT_MAX_SECONDS = 60
@@ -46,8 +47,9 @@ EXIT_SUCCESS = 0
 INPUT_TYPES_SUPPORTED = [EXT_XLSX]
 OUTPUT_TYPES_SUPPORTED = INPUT_TYPES_SUPPORTED
 
-TRUE_VALUES = ["1", "Y", "y", "T", "t"]
-FALSE_VALUES = ["0", "N", "n", "F", "f", ""]
+TRUE_VALUES = [1, "Y", "y", "T", "t"]
+FALSE_VALUES = [0, "N", "n", "F", "f"]
+MISSING_VALUES = ["", None]
 
 
 # =============================================================================
@@ -112,6 +114,7 @@ class SheetNames(object):
     """
     ELIGIBILITY = "Eligibility"
     INFORMATION = "Information"  # output
+    PROJECT_POPULARITY = "Project_popularity"  # output
     PROJECT_ALLOCATIONS = "Project_allocations"  # output
     PROJECTS = "Projects"  # input, output
     STUDENT_ALLOCATIONS = "Student_allocations"  # output
@@ -146,6 +149,13 @@ def mismatch(actual: List[Any], expected: List[Any]) -> str:
         if actual[i] != expected[i]:
             return f"Found {actual[i]!r} where {expected[i]!r} was expected"
     return ""
+
+
+def is_empty_row(row: Sequence[Cell]) -> bool:
+    """
+    Is this an empty spreadsheet row?
+    """
+    return all(cell.value is None for cell in row)
 
 
 # =============================================================================
@@ -326,6 +336,12 @@ class Preferences(object):
                 The item to look up.
         """
         return self._preferences.get(item)  # returns None if absent
+
+    def actively_expressed_preference(self, item: Any) -> bool:
+        """
+        Did the person actively express a preference for this item?
+        """
+        return item in self._preferences
 
 
 # =============================================================================
@@ -585,6 +601,12 @@ class Solution(object):
         """
         return variance(self.supervisor_dissatisfaction_scores())
 
+    def allocated_students(self, project: Project) -> List[Student]:
+        """
+        Which students were allocated to this project?
+        """
+        return sorted(k for k, v in self.allocation.items() if v == project)
+
     def write_xlsx(self, filename: str) -> None:
         """
         Writes the solution to an Excel XLSX file (and its problem, for data
@@ -625,25 +647,71 @@ class Solution(object):
             "Project name",
             "Student number(s)",
             "Student name(s)",
+            "Students' rank(s) of (dissatisfaction with) allocated project",
             "Project supervisor's rank(s) of (dissatisfaction with) allocated student(s)",  # noqa
         ])
         for project in self.problem.sorted_projects():
             student_numbers = []  # type: List[int]
             student_names = []  # type: List[str]
             supervisor_dissatisfactions = []  # type: List[float]
-            for student, allocated_proj in self._gen_student_project_pairs():
-                if allocated_proj == project:
-                    student_numbers.append(student.number)
-                    student_names.append(student.name)
-                    supervisor_dissatisfactions.append(
-                        project.dissatisfaction(student)
-                    )
+            student_dissatisfactions = []  # type: List[float]
+            for student in self.allocated_students(project):
+                student_numbers.append(student.number)
+                student_names.append(student.name)
+                supervisor_dissatisfactions.append(
+                    project.dissatisfaction(student)
+                )
+                student_dissatisfactions.append(
+                    student.dissatisfaction(project)
+                )
             ps.append([
                 project.number,
                 project.name,
                 ", ".join(str(x) for x in student_numbers),
                 ", ".join(student_names),
+                ", ".join(str(x) for x in student_dissatisfactions),
                 ", ".join(str(x) for x in supervisor_dissatisfactions),
+            ])
+
+        # ---------------------------------------------------------------------
+        # Popularity of projects
+        # ---------------------------------------------------------------------
+        pp = wb.create_sheet(SheetNames.PROJECT_POPULARITY)
+        pp.append([
+            "Project number",
+            "Project name",
+            "Total dissatisfaction score from all students",
+            "Number of students expressing a preference",
+            "Students expressing a preference",
+            "Allocated student(s)",
+        ])
+        proj_to_unpop = {}  # type: Dict[Project, float]
+        for project in self.problem.projects:
+            unpopularity = 0
+            for student in self.problem.students:
+                unpopularity += student.dissatisfaction(project)
+            proj_to_unpop[project] = unpopularity
+        for project, unpopularity in sorted(proj_to_unpop.items(),
+                                            key=operator.itemgetter(1, 0)):
+            allocated_students = ", ".join(
+                student.name
+                for student in self.allocated_students(project)
+            )
+            student_prefs = {}  # type: Dict[Student, float]
+            for student in self.problem.students:
+                if student.preferences.actively_expressed_preference(project):
+                    student_prefs[student] = student.preferences.preference(project)  # noqa
+            student_details = []  # type: List[str]
+            for student, studpref in sorted(student_prefs.items(),
+                                            key=operator.itemgetter(1, 0)):
+                student_details.append(f"{student.name} ({studpref})")
+            pp.append([
+                project.number,
+                project.name,
+                unpopularity,
+                len(student_details),
+                ", ".join(student_details),
+                allocated_students,
             ])
 
         # ---------------------------------------------------------------------
@@ -667,6 +735,7 @@ class Solution(object):
              1 - self.supervisor_weight],
             ["Overall weight given to supervisor preferences",
              self.supervisor_weight],
+            ["Command-line parameters", cmdline_quote(sys.argv)],
             [],
             ["SUMMARY STATISTICS"],
             [],
@@ -715,8 +784,11 @@ class Eligibility(object):
     def __init__(self,
                  students: List[Student],
                  projects: List[Project],
-                 default_eligibility=True) -> None:
+                 default_eligibility: bool = True,
+                 allow_defunct_projects: bool = False) -> None:
         """
+        Default constructor, which just sets default eligibility for everyone.
+
         Args:
             projects:
                 All projects.
@@ -724,6 +796,8 @@ class Eligibility(object):
                 All students.
             default_eligibility:
                 Default value for "is student eligible for project"?
+            allow_defunct_projects:
+                Allow projects that permit no students?
         """
         self.students = sorted(students, key=lambda s: s.number)
         self.projects = sorted(projects, key=lambda p: p.number)
@@ -737,6 +811,7 @@ class Eligibility(object):
             )
             for s in students
         )
+        self.allow_defunct_projects = allow_defunct_projects
 
     def __str__(self) -> str:
         """
@@ -765,9 +840,14 @@ class Eligibility(object):
             )
         # 2. Every project has an eligible student.
         for p in self.projects:
-            assert any(self.is_eligible(s, p) for s in self.students), (
-                f"Error: project {p} has no eligible students!"
-            )
+            if not any(self.is_eligible(s, p) for s in self.students):
+                msg = f"Project {p} has no eligible students!"
+                if self.allow_defunct_projects:
+                    log.warning(msg)
+                else:
+                    raise AssertionError(
+                        msg + " [If you meant this, set the "
+                              "--allow_defunct_projects option.]")
 
     def set_eligibility(self,
                         student: Student,
@@ -1030,7 +1110,9 @@ class Problem(object):
     def read_data(cls,
                   filename: str,
                   allow_student_preference_ties: bool = False,
-                  allow_supervisor_preference_ties: bool = False) -> "Problem":
+                  allow_supervisor_preference_ties: bool = False,
+                  missing_eligibility: bool = None,
+                  allow_defunct_projects: bool = False) -> "Problem":
         """
         Reads a file, autodetecting its format, and returning the
         :class:`Problem`.
@@ -1042,6 +1124,12 @@ class Problem(object):
                 Allow students to express preference ties?
             allow_supervisor_preference_ties:
                 Allow supervisors to express preference ties?
+            missing_eligibility:
+                Use ``True`` or ``False`` to treat missing eligibility cells
+                as meaning "eligible" or "ineligible", respectively, or
+                ``None`` to treat blank cells as invalid.
+            allow_defunct_projects:
+                Allow projects that permit no students?
         """
         # File type?
         _, ext = os.path.splitext(filename)
@@ -1049,7 +1137,9 @@ class Problem(object):
             return cls.read_data_xlsx(
                 filename,
                 allow_student_preference_ties=allow_student_preference_ties,
-                allow_supervisor_preference_ties=allow_supervisor_preference_ties  # noqa
+                allow_supervisor_preference_ties=allow_supervisor_preference_ties,  # noqa
+                missing_eligibility=missing_eligibility,
+                allow_defunct_projects=allow_defunct_projects,
             )
         else:
             raise ValueError(
@@ -1060,7 +1150,9 @@ class Problem(object):
     def read_data_xlsx(cls,
                        filename: str,
                        allow_student_preference_ties: bool = False,
-                       allow_supervisor_preference_ties: bool = False) \
+                       allow_supervisor_preference_ties: bool = False,
+                       missing_eligibility: bool = None,
+                       allow_defunct_projects: bool = False) \
             -> "Problem":
         """
         Reads a :class:`Problem` from an Excel XLSX file.
@@ -1072,6 +1164,12 @@ class Problem(object):
                 Allow students to express preference ties?
             allow_supervisor_preference_ties:
                 Allow supervisors to express preference ties?
+            missing_eligibility:
+                Use ``True`` or ``False`` to treat missing eligibility cells
+                as meaning "eligible" or "ineligible", respectively, or
+                ``None`` to treat blank cells as invalid.
+            allow_defunct_projects:
+                Allow projects that permit no students?
         """
         log.info(f"Reading XLSX file: {filename}")
         wb = load_workbook(filename, read_only=True, keep_vba=False,
@@ -1100,8 +1198,7 @@ class Problem(object):
                                          start=2):  # type: int, Sequence[Cell]
             project_number = row_number - 1
             project_name = row[0].value
-            if all(isinstance(_, EmptyCell) for _ in row):
-                # log.warning(f"Projects: skipping blank row {row_number}")
+            if is_empty_row(row):
                 continue
             assert project_name, (
                 f"Missing project name in {SheetNames.PROJECTS} "
@@ -1140,6 +1237,8 @@ class Problem(object):
         stp_rows = ws_students.iter_rows(min_row=2)
         for row_number, row in enumerate(stp_rows, start=2):
             student_number = row_number - 1
+            if is_empty_row(row):
+                continue
             assert len(row) == n_projects + 1, (
                 f"In {SheetNames.STUDENT_PREFERENCES}, student on row "
                 f"{row_number} has a preference row of the wrong "
@@ -1157,11 +1256,13 @@ class Problem(object):
                         f"row {row_number}")
                 project = projects[project_number - 1]
                 student_preferences[project] = pref
-            students.append(Student(name=student_name,
-                                    number=student_number,
-                                    preferences=student_preferences,
-                                    n_projects=n_projects,
-                                    allow_ties=allow_student_preference_ties))
+            new_student = Student(name=student_name,
+                                  number=student_number,
+                                  preferences=student_preferences,
+                                  n_projects=n_projects,
+                                  allow_ties=allow_student_preference_ties)
+            students.append(new_student)
+            # log.critical(new_student)
         del stp_rows
         n_students = len(students)
         log.info(f"Number of students: {n_students}")
@@ -1185,7 +1286,7 @@ class Problem(object):
 
         # Check project headings
         assert len(svp_rows[0]) == 1 + len(projects), (
-            f"First row of of {SheetNames.SUPERVISOR_PREFERENCES} should have "
+            f"First row of {SheetNames.SUPERVISOR_PREFERENCES} should have "
             f"{1 + len(projects)} columns (one on the left for student names "
             f"plus {len(projects)} columns for projects). Yours has "
             f"{len(svp_rows[0])}."
@@ -1199,13 +1300,18 @@ class Problem(object):
             f"{SheetNames.PROJECTS} sheet"
         )
         # Check student names
-        _from_sheet = [svp_rows[i + 1][0] for i in range(len(students))]
-        _from_students = [students[i].name for i in range(len(students))]
-        assert _from_sheet == _from_students, (
+        assert len(svp_rows) == 1 + len(students), (
+            f"Sheet {SheetNames.SUPERVISOR_PREFERENCES} should have "
+            f"{1 + len(students)} rows (one header row plus {len(students)} "
+            f"rows for students). Yours has {len(students)}."
+        )
+        _sn_from_sheet = [svp_rows[i + 1][0] for i in range(len(students))]
+        _sn_from_students = [students[i].name for i in range(len(students))]
+        assert _sn_from_sheet == _sn_from_students, (
             f"First column of {SheetNames.SUPERVISOR_PREFERENCES} sheet "
             f"must contain all student names in the same order as in the "
             f"{SheetNames.STUDENT_PREFERENCES} sheet. Mismatch is: "
-            f"{mismatch(_from_sheet, _from_students)}"
+            f"{mismatch(_sn_from_sheet, _sn_from_students)}"
         )
         # Read preferences
         for pcol, project in enumerate(projects, start=2):
@@ -1225,14 +1331,19 @@ class Problem(object):
                 allow_ties=allow_supervisor_preference_ties
             )
         del svp_rows
+        del _sn_from_sheet
+        del _sn_from_students
 
         # ---------------------------------------------------------------------
         # Eligibility
         # ---------------------------------------------------------------------
 
-        eligibility = Eligibility(students=students,
-                                  projects=projects,
-                                  default_eligibility=True)
+        eligibility = Eligibility(
+            students=students,
+            projects=projects,
+            default_eligibility=True,
+            allow_defunct_projects=allow_defunct_projects
+        )
         if SheetNames.ELIGIBILITY in wb:
             ws_eligibility = wb[SheetNames.ELIGIBILITY]
             el_rows = [
@@ -1249,31 +1360,38 @@ class Problem(object):
                 f"{SheetNames.PROJECTS} sheet"
             )
             # Check student names
-            assert all(
-                el_rows[i + 1][0] == students[i].name
-                for i in range(len(students))
-            ), (
+            _sn_from_sheet = [el_rows[i + 1][0] for i in range(len(students))]
+            _sn_from_students = [students[i].name for i in range(len(students))]  # noqa
+            assert _sn_from_sheet == _sn_from_students, (
                 f"First column of {SheetNames.ELIGIBILITY} sheet "
                 f"must contain all student names in the same order as in the "
-                f"{SheetNames.STUDENT_PREFERENCES} sheet"
+                f"{SheetNames.STUDENT_PREFERENCES} sheet. Mismatch is: "
+                f"{mismatch(_sn_from_sheet, _sn_from_students)}"
             )
             # Read eligibility
             for pcol, project in enumerate(projects, start=2):
                 for srow, student in enumerate(students, start=2):
-                    eligibility_str = str(el_rows[srow - 1][pcol - 1])
-                    if eligibility_str in TRUE_VALUES:
+                    eligibility_val = el_rows[srow - 1][pcol - 1]
+                    if eligibility_val in TRUE_VALUES:
                         eligible = True
-                    elif eligibility_str in FALSE_VALUES:
+                    elif eligibility_val in FALSE_VALUES:
                         eligible = False
+                    elif (eligibility_val in MISSING_VALUES and
+                            missing_eligibility is not None):
+                        eligible = missing_eligibility
                     else:
                         raise ValueError(
-                            f"Eligibility value {eligibility_str!r} is "
+                            f"Eligibility value {eligibility_val!r} "
+                            f"(at row {srow}, column {pcol}) is "
                             f"invalid; use one of {TRUE_VALUES} "
-                            f"for 'eligible' or one of {FALSE_VALUES} "
-                            f"for 'ineligible'."
+                            f"for 'eligible', or one of {FALSE_VALUES} "
+                            f"for 'ineligible'. The meaning of "
+                            f"{MISSING_VALUES} is configurable."
                         )
                     eligibility.set_eligibility(student, project, eligible)
             del el_rows
+            del _sn_from_sheet
+            del _sn_from_students
 
         # ---------------------------------------------------------------------
         # Create and return the Problem object
@@ -1453,6 +1571,17 @@ first row is the title row):
              "(e.g. 2.5 for joint second/third place)?"
     )
     parser.add_argument(
+        "--missing_eligibility", type=bool, default=None,
+        help="If an eligibility cell is blank, treat it as eligible (use "
+             "'True') or ineligible (use 'False')? Default, of None, means "
+             "empty cells are invalid."
+    )
+    parser.add_argument(
+        "--allow_defunct_projects", action="store_true",
+        help="Allow projects that say that all students are ineligible (e.g. "
+             "because they've been pre-allocated by different process)?"
+    )
+    parser.add_argument(
         "--verbose", action="store_true",
         help="Be verbose"
     )
@@ -1468,6 +1597,8 @@ first row is the title row):
         args.filename,
         allow_student_preference_ties=args.allow_student_preference_ties,
         allow_supervisor_preference_ties=args.allow_supervisor_preference_ties,
+        missing_eligibility=args.missing_eligibility,
+        allow_defunct_projects=args.allow_defunct_projects,
     )
     log.info(problem)
     solution = problem.best_solution(
