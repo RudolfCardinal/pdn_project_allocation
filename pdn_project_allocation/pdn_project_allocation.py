@@ -9,6 +9,7 @@ See README.rst
 
 import argparse
 from collections import OrderedDict
+import csv
 import datetime
 import logging
 import operator
@@ -157,6 +158,20 @@ def is_empty_row(row: Sequence[Cell]) -> bool:
     Is this an empty spreadsheet row?
     """
     return all(cell.value is None for cell in row)
+
+
+def read_until_empty_row(ws: Worksheet) -> List[List[Any]]:
+    """
+    Reads a spreadsheet until the first empty line.
+    (Helpful because Excel spreadsheets are sometimes seen as having 1048576
+    rows when they don't really).
+    """
+    rows = []  # type: List[List[Any]]
+    for row in ws.iter_rows():
+        if is_empty_row(row):
+            break
+        rows.append([cell.value for cell in row])
+    return rows
 
 
 # =============================================================================
@@ -722,6 +737,7 @@ class Solution(object):
             filename:
                 Name of file to write.
         """
+        log.info(f"Writing output to: {filename}")
         wb = Workbook(write_only=True)  # doesn't create default sheet
 
         # ---------------------------------------------------------------------
@@ -877,6 +893,30 @@ class Solution(object):
         else:
             raise ValueError(
                 f"Don't know how to write file type {ext!r} for {filename!r}")
+
+    def write_student_csv(self, filename: str) -> None:
+        """
+        Writes just the "per student" mapping to a CSV file, for comparisons
+        (e.g. via ``meld``).
+        """
+        log.info(f"Writing student allocation data to: {filename}")
+        with open(filename, "w") as file:
+            writer = csv.writer(file)
+            writer.writerow([
+                "Student number",
+                "Student name",
+                "Project number",
+                "Project name",
+                "Student's rank of (dissatisfaction with) allocated project",
+            ])
+            for student, project in self._gen_student_project_pairs():
+                writer.writerow([
+                    student.number,
+                    student.name,
+                    project.number,
+                    project.name,
+                    student.dissatisfaction(project),
+                ])
 
 
 # =============================================================================
@@ -1245,6 +1285,7 @@ class Problem(object):
         # Projects
         # ---------------------------------------------------------------------
 
+        log.info("... reading projects...")
         projects = []  # type: List[Project]
         # These will raise an error if the named sheet does not exist:
         ws_projects = wb[SheetNames.PROJECTS]  # type: Worksheet
@@ -1259,24 +1300,19 @@ class Problem(object):
             f"{SheetHeadings.MAX_NUMBER_OF_STUDENTS:}"
         )
         log.debug(f"Projects: max_row = {ws_projects.max_row}")
-        # ... may be 1048576 for spreadsheets created in Excel
-        for row_number, row in enumerate(ws_projects.iter_rows(min_row=2),
-                                         start=2):  # type: int, Sequence[Cell]
+        p_rows = read_until_empty_row(ws_projects)
+        for row_number, row in enumerate(p_rows[1:], start=2):
             project_number = row_number - 1
-            project_name = row[0].value
-            if is_empty_row(row):
-                continue
+            project_name = row[0]
             assert project_name, (
                 f"Missing project name in {SheetNames.PROJECTS} "
                 f"row {row_number}"
             )
-            try:
-                max_n_students = int(row[1].value)
-            except (ValueError, TypeError):
-                raise ValueError(
-                    f"Bad max_n_students in {SheetNames.PROJECTS} "
-                    f"row {row_number}"
-                )
+            max_n_students = row[1]
+            assert isinstance(max_n_students, int), (
+                f"Bad max_n_students in {SheetNames.PROJECTS} "
+                f"row {row_number}; is {max_n_students!r}"
+            )
             projects.append(Project(
                 name=project_name,
                 number=project_number,
@@ -1291,38 +1327,38 @@ class Problem(object):
         # Students with their preferences
         # ---------------------------------------------------------------------
 
+        log.info("... reading students and their preferences...")
         students = []  # type: List[Student]
         ws_students = wb[SheetNames.STUDENT_PREFERENCES]  # type: Worksheet  # noqa
+        stp_rows = read_until_empty_row(ws_students)
         # Check project headings
         assert all(
-            ws_students.cell(row=1, column=i + 2).value == projects[i].name
-            for i in range(len(projects))
+            stp_rows[0][i + 1] == projects[i].name
+            for i in range(n_projects)
         ), (
             f"First row of {SheetNames.STUDENT_PREFERENCES} sheet "
             f"must contain all project names in the same order as in the "
             f"{SheetNames.PROJECTS} sheet"
         )
-        # Students
-        stp_rows = ws_students.iter_rows(min_row=2)
-        for row_number, row in enumerate(stp_rows, start=2):
+        for row_number, row in enumerate(stp_rows[1:], start=2):
             student_number = row_number - 1
-            if is_empty_row(row):
-                continue
             assert len(row) == n_projects + 1, (
                 f"In {SheetNames.STUDENT_PREFERENCES}, student on row "
                 f"{row_number} has a preference row of the wrong "
                 f"length (expected {n_projects + 1})."
             )
-            student_name = row[0].value
+            student_name = row[0]
             student_preferences = OrderedDict()  # type: Dict[Project, int]
-            for project_number, cell in enumerate(row[1:], start=1):
-                try:
-                    pref = cell.value or None
-                except (ValueError, TypeError):
-                    raise ValueError(
-                        f"Bad preference for student {student_name} in "
-                        f"{SheetNames.STUDENT_PREFERENCES} "
-                        f"row {row_number}")
+            for project_number, pref in enumerate(row[1:], start=1):
+                if config.allow_student_preference_ties:
+                    ok = pref is None or isinstance(pref, float)
+                else:
+                    ok = pref is None or isinstance(pref, int)
+                assert ok, (
+                    f"Bad preference for student {student_name} in "
+                    f"{SheetNames.STUDENT_PREFERENCES} "
+                    f"row {row_number}: {pref!r}"
+                )
                 project = projects[project_number - 1]
                 student_preferences[project] = pref
             new_student = Student(
@@ -1344,6 +1380,7 @@ class Problem(object):
         # Supervisor preferences, stored with their project object
         # ---------------------------------------------------------------------
 
+        log.info("... reading supervisor preferences...")
         ws_supervisorprefs = wb[SheetNames.SUPERVISOR_PREFERENCES]  # type: Worksheet  # noqa
         # Accessing cells by (row, column) index is ridiculously slow here, and
         # the time is spent in the internals of openpyxl; specifically, in
@@ -1351,35 +1388,32 @@ class Problem(object):
         # install lxml as recommended, and specifying the "simple read-only"
         # options. So, it is **much** faster to load all the values like this
         # and then operate on the copies (e.g. ~6 seconds becomes ~1 ms):
-        svp_rows = [
-            [cell.value for cell in row]
-            for row in ws_supervisorprefs.iter_rows()
-            if not is_empty_row(row)
-        ]  # index as : svp_rows[row_zero_based][column_zero_based]
+        svp_rows = read_until_empty_row(ws_supervisorprefs)
+        # ... index as : svp_rows[row_zero_based][column_zero_based]
 
         # Check project headings
-        assert len(svp_rows[0]) == 1 + len(projects), (
+        assert len(svp_rows[0]) == 1 + n_projects, (
             f"First row of {SheetNames.SUPERVISOR_PREFERENCES} should have "
-            f"{1 + len(projects)} columns (one on the left for student names "
-            f"plus {len(projects)} columns for projects). Yours has "
+            f"{1 + n_projects} columns (one on the left for student names "
+            f"plus {n_projects} columns for projects). Yours has "
             f"{len(svp_rows[0])}."
         )
         assert all(
             svp_rows[0][i + 1] == projects[i].name
-            for i in range(len(projects))
+            for i in range(n_projects)
         ), (
             f"First row of {SheetNames.SUPERVISOR_PREFERENCES} sheet "
             f"must contain all project names in the same order as in the "
             f"{SheetNames.PROJECTS} sheet"
         )
         # Check student names
-        assert len(svp_rows) == 1 + len(students), (
+        assert len(svp_rows) == 1 + n_students, (
             f"Sheet {SheetNames.SUPERVISOR_PREFERENCES} should have "
-            f"{1 + len(students)} rows (one header row plus {len(students)} "
+            f"{1 + n_students} rows (one header row plus {n_students} "
             f"rows for students). Yours has {len(svp_rows)}."
         )
-        _sn_from_sheet = [svp_rows[i + 1][0] for i in range(len(students))]
-        _sn_from_students = [students[i].name for i in range(len(students))]
+        _sn_from_sheet = [svp_rows[i + 1][0] for i in range(n_students)]
+        _sn_from_students = [students[i].name for i in range(n_students)]
         assert _sn_from_sheet == _sn_from_students, (
             f"First column of {SheetNames.SUPERVISOR_PREFERENCES} sheet "
             f"must contain all student names in the same order as in the "
@@ -1412,6 +1446,7 @@ class Problem(object):
         # Eligibility
         # ---------------------------------------------------------------------
 
+        log.info("... reading eligibility...")
         eligibility = Eligibility(
             students=students,
             projects=projects,
@@ -1420,22 +1455,20 @@ class Problem(object):
         )
         if SheetNames.ELIGIBILITY in wb:
             ws_eligibility = wb[SheetNames.ELIGIBILITY]
-            el_rows = [
-                [cell.value for cell in row]
-                for row in ws_eligibility.iter_rows()
-            ]  # index as : el_rows[row_zero_based][column_zero_based]
+            el_rows = read_until_empty_row(ws_eligibility)
+            # ... index as : el_rows[row_zero_based][column_zero_based]
             # Check project headings
             assert all(
                 el_rows[0][i + 1] == projects[i].name
-                for i in range(len(projects))
+                for i in range(n_projects)
             ), (
                 f"First row of {SheetNames.ELIGIBILITY} sheet "
                 f"must contain all project names in the same order as in the "
                 f"{SheetNames.PROJECTS} sheet"
             )
             # Check student names
-            _sn_from_sheet = [el_rows[i + 1][0] for i in range(len(students))]
-            _sn_from_students = [students[i].name for i in range(len(students))]  # noqa
+            _sn_from_sheet = [el_rows[i + 1][0] for i in range(n_students)]
+            _sn_from_students = [students[i].name for i in range(n_students)]  # noqa
             assert _sn_from_sheet == _sn_from_students, (
                 f"First column of {SheetNames.ELIGIBILITY} sheet "
                 f"must contain all student names in the same order as in the "
@@ -1473,6 +1506,7 @@ class Problem(object):
         # ---------------------------------------------------------------------
         # Create and return the Problem object
         # ---------------------------------------------------------------------
+
         log.info("... finished reading")
         return Problem(projects=projects,
                        students=students,
@@ -1620,58 +1654,71 @@ first row is the title row):
 """  # noqa
     )
     parser.add_argument(
+        "--verbose", action="store_true",
+        help="Be verbose"
+    )
+
+    file_group = parser.add_argument_group("Files")
+    file_group.add_argument(
         "filename", type=str,
         help="Spreadsheet filename to read. "
              "Input file types supported: " + str(INPUT_TYPES_SUPPORTED)
     )
-    parser.add_argument(
-        "--supervisor_weight", type=float, default=DEFAULT_SUPERVISOR_WEIGHT,
-        help="Weight allocated to supervisor preferences (student preferences "
-             "are weighted as [1 minus this])"
-    )
-    parser.add_argument(
-        "--preference_power", type=float, default=DEFAULT_PREFERENCE_POWER,
-        help="Power (exponent) to raise preferences by."
-    )
-    parser.add_argument(
-        "--maxtime", type=float, default=DEFAULT_MAX_SECONDS,
-        help="Maximum time (in seconds) to run MIP optimizer for"
-    )
-    parser.add_argument(
+    file_group.add_argument(
         "--output", type=str,
         help="Optional filename to write output to. "
              "Output types supported: " + str(OUTPUT_TYPES_SUPPORTED)
     )
-    parser.add_argument(
-        "--student_must_have_choice", action="store_true",
-        help="Prevent students being allocated to projects they've not "
-             "explicitly ranked?"
+    file_group.add_argument(
+        "--output_student_csv", type=str,
+        help="Optional filename to write student CSV output to."
     )
-    parser.add_argument(
+
+    data_group = parser.add_argument_group("Data")
+    data_group.add_argument(
         "--allow_student_preference_ties", action="store_true",
         help="Allow students to express tied preferences "
              "(e.g. 2.5 for joint second/third place)?"
     )
-    parser.add_argument(
+    data_group.add_argument(
         "--allow_supervisor_preference_ties", action="store_true",
         help="Allow supervisors to express tied preferences "
              "(e.g. 2.5 for joint second/third place)?"
     )
-    parser.add_argument(
+    data_group.add_argument(
         "--missing_eligibility", type=bool, default=None,
         help="If an eligibility cell is blank, treat it as eligible (use "
              "'True') or ineligible (use 'False')? Default, of None, means "
              "empty cells are invalid."
     )
-    parser.add_argument(
+    data_group.add_argument(
         "--allow_defunct_projects", action="store_true",
         help="Allow projects that say that all students are ineligible (e.g. "
              "because they've been pre-allocated by different process)?"
     )
-    parser.add_argument(
-        "--verbose", action="store_true",
-        help="Be verbose"
+
+    method_group = parser.add_argument_group("Method")
+    method_group.add_argument(
+        "--supervisor_weight", type=float, default=DEFAULT_SUPERVISOR_WEIGHT,
+        help="Weight allocated to supervisor preferences (student preferences "
+             "are weighted as [1 minus this])"
     )
+    method_group.add_argument(
+        "--preference_power", type=float, default=DEFAULT_PREFERENCE_POWER,
+        help="Power (exponent) to raise preferences by."
+    )
+    method_group.add_argument(
+        "--student_must_have_choice", action="store_true",
+        help="Prevent students being allocated to projects they've not "
+             "explicitly ranked?"
+    )
+
+    technical_group = parser.add_argument_group("Technicalities")
+    technical_group.add_argument(
+        "--maxtime", type=float, default=DEFAULT_MAX_SECONDS,
+        help="Maximum time (in seconds) to run MIP optimizer for"
+    )
+
     args = parser.parse_args()
     main_only_quicksetup_rootlogger(level=logging.DEBUG if args.verbose
                                     else logging.INFO)
@@ -1710,6 +1757,8 @@ first row is the title row):
         else:
             log.warning(
                 "Output not saved. Specify the --output option for that.")
+        if args.output_student_csv:
+            solution.write_student_csv(args.output_student_csv)
         sys.exit(EXIT_SUCCESS)
     else:
         log.error("No solution found!")
