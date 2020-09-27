@@ -35,6 +35,7 @@ VERSION = "1.1.0"
 VERSION_DATE = "2020-09-27"
 
 ALMOST_ONE = 0.99
+DEFAULT_PREFERENCE_POWER = 1.0
 DEFAULT_MAX_SECONDS = 60
 DEFAULT_SUPERVISOR_WEIGHT = 0.3  # 70% student, 30% supervisor by default
 RNG_SEED = 1234  # fixed
@@ -159,6 +160,63 @@ def is_empty_row(row: Sequence[Cell]) -> bool:
 
 
 # =============================================================================
+# Master config
+# =============================================================================
+
+class Config(object):
+    """
+    Master config object.
+    """
+
+    def __init__(
+            self,
+            filename: str,
+            allow_defunct_projects: bool = False,
+            allow_student_preference_ties: bool = False,
+            allow_supervisor_preference_ties: bool = False,
+            missing_eligibility: bool = None,
+            preference_power: float = DEFAULT_PREFERENCE_POWER,
+            student_must_have_choice: bool = False,
+            cmd_args: Dict[str, Any] = None) -> None:
+        """
+        Reads a file, autodetecting its format, and returning the
+        :class:`Problem`.
+
+        Args:
+            filename:
+                File to read.
+            allow_defunct_projects:
+                Allow projects that permit no students?
+            allow_student_preference_ties:
+                Allow students to express preference ties?
+            allow_supervisor_preference_ties:
+                Allow supervisors to express preference ties?
+            missing_eligibility:
+                Use ``True`` or ``False`` to treat missing eligibility cells
+                as meaning "eligible" or "ineligible", respectively, or
+                ``None`` to treat blank cells as invalid.
+            preference_power:
+                Power (exponent) to raise preferences to.
+            student_must_have_choice:
+                Prevent students being allocated to projects they've not
+                explicitly ranked?
+            cmd_args:
+                Copy of command-line arguments
+        """
+        self.filename = filename
+        self.allow_defunct_projects = allow_defunct_projects
+        self.allow_student_preference_ties = allow_student_preference_ties
+        self.allow_supervisor_preference_ties = allow_supervisor_preference_ties  # noqa
+        self.missing_eligibility = missing_eligibility
+        self.preference_power = preference_power
+        self.student_must_have_choice = student_must_have_choice
+        self.cmd_args = cmd_args
+
+    def __str__(self) -> str:
+        return str(self.cmd_args)
+
+
+# =============================================================================
 # Preferences
 # =============================================================================
 
@@ -171,7 +229,8 @@ class Preferences(object):
                  n_options: int,
                  preferences: Dict[Any, Union[int, float]] = None,
                  owner: Any = None,
-                 allow_ties: bool = False) -> None:
+                 allow_ties: bool = False,
+                 preference_power: float = DEFAULT_PREFERENCE_POWER) -> None:
         """
         Args:
             n_options:
@@ -185,6 +244,8 @@ class Preferences(object):
                 only).
             allow_ties:
                 Allows ties to be expressed.
+            preference_power:
+                Power (exponent) to raise preferences to.
 
         Other attributes:
         - ``available_dissatisfaction``: sum of [1 ... ``n_options`]
@@ -201,6 +262,7 @@ class Preferences(object):
             1, n_options)
         self._allocated_dissatisfaction = 0
         self._allow_ties = allow_ties
+        self._preference_power = preference_power
 
         if preferences:
             for item, rank in preferences.items():
@@ -216,7 +278,7 @@ class Preferences(object):
         parts = ", ".join(f"{k} → {v}" for k, v in self._preferences.items())
         return (
             f"Preferences({parts}; "
-            f"unranked options score {self.unranked_item_dissatisfaction})"
+            f"unranked options score {self._unranked_item_dissatisfaction})"
         )
 
     def set_n_options(self, n_options: int) -> None:
@@ -295,7 +357,7 @@ class Preferences(object):
         )
 
     @property
-    def unallocated_dissatisfaction(self) -> int:
+    def _unallocated_dissatisfaction(self) -> int:
         """
         The amount of available "dissatisfaction", not yet allocated to an
         item (see :class:`Preferences`).
@@ -303,7 +365,7 @@ class Preferences(object):
         return self._available_dissatisfaction - self._allocated_dissatisfaction  # noqa
 
     @property
-    def unranked_item_dissatisfaction(self) -> Optional[float]:
+    def _unranked_item_dissatisfaction(self) -> Optional[float]:
         """
         The mean "dissatisfaction" (see :class:`Preferences`) for every option
         without an explicit preference, or ``None`` if there are no such
@@ -311,21 +373,34 @@ class Preferences(object):
         """
         n_unranked = self._n_options - len(self._preferences)
         return (
-            self.unallocated_dissatisfaction / n_unranked
+            self._unallocated_dissatisfaction / n_unranked
             if n_unranked > 0 else None
         )
 
     def preference(self, item: Any) -> Union[int, float]:
         """
-        Returns a numerical preference score for an item. Will return the
+        Returns a numerical preference score for an item. Will use the
         "unranked" item dissatisfaction if no preference has been expressed for
         this particular item.
+
+        Raises the raw preference score to ``preference_power`` (by default 1).
 
         Args:
             item:
                 The item to look up.
         """
-        return self._preferences.get(item, self.unranked_item_dissatisfaction)
+        return self._preferences.get(item, self._unranked_item_dissatisfaction)
+
+    def exponentiated_preference(self, item: Any) -> Union[int, float]:
+        """
+        As for :meth:`preference`, but raised to ``preference_power`` (by
+        default 1).
+
+        Args:
+            item:
+                The item to look up.
+        """
+        return self.preference(item) ** self._preference_power
 
     def raw_preference(self, item: Any) -> Optional[int]:
         """
@@ -357,7 +432,8 @@ class Student(object):
                  number: int,
                  preferences: Dict["Project", int],
                  n_projects: int,
-                 allow_ties: bool = False) -> None:
+                 allow_ties: bool = False,
+                 preference_power: float = DEFAULT_PREFERENCE_POWER) -> None:
         """
         Args:
             name:
@@ -371,6 +447,8 @@ class Student(object):
                 Total number of projects (for validating inputs).
             allow_ties:
                 Allow ties in preferences?
+            preference_power:
+                Power (exponent) to raise preferences to.
         """
         self.name = name
         self.number = number
@@ -378,7 +456,8 @@ class Student(object):
             n_options=n_projects,
             preferences=preferences,
             owner=self,
-            allow_ties=allow_ties
+            allow_ties=allow_ties,
+            preference_power=preference_power
         )
 
     def __str__(self) -> str:
@@ -412,6 +491,18 @@ class Student(object):
         """
         return self.preferences.preference(project)
 
+    def exponentiated_dissatisfaction(self, project: "Project") -> float:
+        """
+        As for :meth:`dissatisfaction`, but raised to the desired power.
+        """
+        return self.preferences.exponentiated_preference(project)
+
+    def explicitly_ranked_project(self, project: "Project") -> bool:
+        """
+        Did the student explicitly rank this project?
+        """
+        return self.preferences.actively_expressed_preference(project)
+
 
 # =============================================================================
 # Project
@@ -424,7 +515,8 @@ class Project(object):
     def __init__(self,
                  name: str,
                  number: int,
-                 max_n_students: int) -> None:
+                 max_n_students: int,
+                 allow_defunct_projects: bool = False) -> None:
         """
         Args:
             name:
@@ -433,10 +525,15 @@ class Project(object):
                 Project number (cosmetic only; matches input order).
             max_n_students:
                 Maximum number of students supported.
+            allow_defunct_projects:
+                Allow projects that permit no students?
         """
         assert name, "Missing name"
         assert number >= 1, "Bad project number"
-        assert max_n_students >= 1, "Bad max_n_students"
+        if allow_defunct_projects:
+            assert max_n_students >= 0, "Bad max_n_students"
+        else:
+            assert max_n_students >= 1, "Bad max_n_students"
         self.name = name
         self.number = number
         self.max_n_students = max_n_students
@@ -464,10 +561,12 @@ class Project(object):
             f"{self.supervisor_preferences}"
         )
 
-    def set_supervisor_preferences(self,
-                                   n_students: int,
-                                   preferences: Dict[Student, int],
-                                   allow_ties: bool = False) -> None:
+    def set_supervisor_preferences(
+            self,
+            n_students: int,
+            preferences: Dict[Student, int],
+            allow_ties: bool = False,
+            preference_power: float = DEFAULT_PREFERENCE_POWER) -> None:
         """
         Sets the supervisor's preferences about students for a project.
         """
@@ -475,7 +574,8 @@ class Project(object):
             n_options=n_students,
             owner=self,
             preferences=preferences,
-            allow_ties=allow_ties
+            allow_ties=allow_ties,
+            preference_power=preference_power
         )
 
     def dissatisfaction(self, student: Student) -> float:
@@ -484,6 +584,12 @@ class Project(object):
         student?
         """
         return self.supervisor_preferences.preference(student)
+
+    def exponentiated_dissatisfaction(self, project: "Project") -> float:
+        """
+        As for :meth:`dissatisfaction`, but raised to the desired power.
+        """
+        return self.supervisor_preferences.exponentiated_preference(project)
 
 
 # =============================================================================
@@ -736,6 +842,7 @@ class Solution(object):
             ["Overall weight given to supervisor preferences",
              self.supervisor_weight],
             ["Command-line parameters", cmdline_quote(sys.argv)],
+            ["Config", str(self.problem.config)],
             [],
             ["SUMMARY STATISTICS"],
             [],
@@ -893,6 +1000,7 @@ class Problem(object):
     def __init__(self,
                  projects: List[Project],
                  students: List[Student],
+                 config: Config,
                  eligibility: Eligibility = None) -> None:
         """
         Args:
@@ -900,6 +1008,8 @@ class Problem(object):
                 List of projects (with supervisor preference information).
             students:
                 List of students (with their project preferences).
+            config:
+                Master config object
             eligibility:
                 Dictionary of the form eligibility[student][project] = bool.
 
@@ -910,6 +1020,7 @@ class Problem(object):
         """
         self.projects = projects
         self.students = students
+        self.config = config
         self.eligibility = eligibility or Eligibility(students, projects)
         self.eligibility.assert_valid()
         # Fix the order:
@@ -1031,9 +1142,9 @@ class Problem(object):
             [
                 (
                     student_weight *
-                    self.students[s].dissatisfaction(self.projects[p]) +
+                    self.students[s].exponentiated_dissatisfaction(self.projects[p]) +  # noqa
                     supervisor_weight *
-                    self.projects[p].dissatisfaction(self.students[s])
+                    self.projects[p].exponentiated_dissatisfaction(self.students[s])  # noqa
                 )
                 for p in range(n_projects)  # second index
             ]
@@ -1107,72 +1218,27 @@ class Problem(object):
         log.debug("\n".join(lines))
 
     @classmethod
-    def read_data(cls,
-                  filename: str,
-                  allow_student_preference_ties: bool = False,
-                  allow_supervisor_preference_ties: bool = False,
-                  missing_eligibility: bool = None,
-                  allow_defunct_projects: bool = False) -> "Problem":
+    def read_data(cls, config: Config) -> "Problem":
         """
         Reads a file, autodetecting its format, and returning the
         :class:`Problem`.
-
-        Args:
-            filename:
-                File to read.
-            allow_student_preference_ties:
-                Allow students to express preference ties?
-            allow_supervisor_preference_ties:
-                Allow supervisors to express preference ties?
-            missing_eligibility:
-                Use ``True`` or ``False`` to treat missing eligibility cells
-                as meaning "eligible" or "ineligible", respectively, or
-                ``None`` to treat blank cells as invalid.
-            allow_defunct_projects:
-                Allow projects that permit no students?
         """
         # File type?
-        _, ext = os.path.splitext(filename)
+        _, ext = os.path.splitext(config.filename)
         if ext == EXT_XLSX:
-            return cls.read_data_xlsx(
-                filename,
-                allow_student_preference_ties=allow_student_preference_ties,
-                allow_supervisor_preference_ties=allow_supervisor_preference_ties,  # noqa
-                missing_eligibility=missing_eligibility,
-                allow_defunct_projects=allow_defunct_projects,
-            )
+            return cls.read_data_xlsx(config)
         else:
-            raise ValueError(
-                f"Don't know how to read file type {ext!r} for {filename!r}")
+            raise ValueError(f"Don't know how to read file type {ext!r} "
+                             f"for {config.filename!r}")
 
     # noinspection DuplicatedCode
     @classmethod
-    def read_data_xlsx(cls,
-                       filename: str,
-                       allow_student_preference_ties: bool = False,
-                       allow_supervisor_preference_ties: bool = False,
-                       missing_eligibility: bool = None,
-                       allow_defunct_projects: bool = False) \
-            -> "Problem":
+    def read_data_xlsx(cls, config: Config) -> "Problem":
         """
         Reads a :class:`Problem` from an Excel XLSX file.
-
-        Args:
-            filename:
-                File to read.
-            allow_student_preference_ties:
-                Allow students to express preference ties?
-            allow_supervisor_preference_ties:
-                Allow supervisors to express preference ties?
-            missing_eligibility:
-                Use ``True`` or ``False`` to treat missing eligibility cells
-                as meaning "eligible" or "ineligible", respectively, or
-                ``None`` to treat blank cells as invalid.
-            allow_defunct_projects:
-                Allow projects that permit no students?
         """
-        log.info(f"Reading XLSX file: {filename}")
-        wb = load_workbook(filename, read_only=True, keep_vba=False,
+        log.info(f"Reading XLSX file: {config.filename}")
+        wb = load_workbook(config.filename, read_only=True, keep_vba=False,
                            data_only=True,  keep_links=False)
 
         # ---------------------------------------------------------------------
@@ -1211,9 +1277,12 @@ class Problem(object):
                     f"Bad max_n_students in {SheetNames.PROJECTS} "
                     f"row {row_number}"
                 )
-            projects.append(Project(name=project_name,
-                                    number=project_number,
-                                    max_n_students=max_n_students))
+            projects.append(Project(
+                name=project_name,
+                number=project_number,
+                max_n_students=max_n_students,
+                allow_defunct_projects=config.allow_defunct_projects
+            ))
         n_projects = len(projects)
         assert n_projects, "No projects defined!"
         log.info(f"Number of projects: {n_projects}")
@@ -1256,11 +1325,14 @@ class Problem(object):
                         f"row {row_number}")
                 project = projects[project_number - 1]
                 student_preferences[project] = pref
-            new_student = Student(name=student_name,
-                                  number=student_number,
-                                  preferences=student_preferences,
-                                  n_projects=n_projects,
-                                  allow_ties=allow_student_preference_ties)
+            new_student = Student(
+                name=student_name,
+                number=student_number,
+                preferences=student_preferences,
+                n_projects=n_projects,
+                allow_ties=config.allow_student_preference_ties,
+                preference_power=config.preference_power,
+            )
             students.append(new_student)
             # log.critical(new_student)
         del stp_rows
@@ -1282,6 +1354,7 @@ class Problem(object):
         svp_rows = [
             [cell.value for cell in row]
             for row in ws_supervisorprefs.iter_rows()
+            if not is_empty_row(row)
         ]  # index as : svp_rows[row_zero_based][column_zero_based]
 
         # Check project headings
@@ -1303,7 +1376,7 @@ class Problem(object):
         assert len(svp_rows) == 1 + len(students), (
             f"Sheet {SheetNames.SUPERVISOR_PREFERENCES} should have "
             f"{1 + len(students)} rows (one header row plus {len(students)} "
-            f"rows for students). Yours has {len(students)}."
+            f"rows for students). Yours has {len(svp_rows)}."
         )
         _sn_from_sheet = [svp_rows[i + 1][0] for i in range(len(students))]
         _sn_from_students = [students[i].name for i in range(len(students))]
@@ -1328,7 +1401,8 @@ class Problem(object):
             project.set_supervisor_preferences(
                 n_students=n_students,
                 preferences=supervisor_prefs,
-                allow_ties=allow_supervisor_preference_ties
+                allow_ties=config.allow_supervisor_preference_ties,
+                preference_power=config.preference_power,
             )
         del svp_rows
         del _sn_from_sheet
@@ -1342,7 +1416,7 @@ class Problem(object):
             students=students,
             projects=projects,
             default_eligibility=True,
-            allow_defunct_projects=allow_defunct_projects
+            allow_defunct_projects=config.allow_defunct_projects
         )
         if SheetNames.ELIGIBILITY in wb:
             ws_eligibility = wb[SheetNames.ELIGIBILITY]
@@ -1377,8 +1451,8 @@ class Problem(object):
                     elif eligibility_val in FALSE_VALUES:
                         eligible = False
                     elif (eligibility_val in MISSING_VALUES and
-                            missing_eligibility is not None):
-                        eligible = missing_eligibility
+                            config.missing_eligibility is not None):
+                        eligible = config.missing_eligibility
                     else:
                         raise ValueError(
                             f"Eligibility value {eligibility_val!r} "
@@ -1388,6 +1462,9 @@ class Problem(object):
                             f"for 'ineligible'. The meaning of "
                             f"{MISSING_VALUES} is configurable."
                         )
+                    if (config.student_must_have_choice and
+                            not student.explicitly_ranked_project(project)):
+                        eligible = False
                     eligibility.set_eligibility(student, project, eligible)
             del el_rows
             del _sn_from_sheet
@@ -1399,7 +1476,8 @@ class Problem(object):
         log.info("... finished reading")
         return Problem(projects=projects,
                        students=students,
-                       eligibility=eligibility)
+                       eligibility=eligibility,
+                       config=config)
 
     # noinspection DuplicatedCode
     def write_to_xlsx_workbook(self, wb: Workbook) -> None:
@@ -1552,6 +1630,10 @@ first row is the title row):
              "are weighted as [1 minus this])"
     )
     parser.add_argument(
+        "--preference_power", type=float, default=DEFAULT_PREFERENCE_POWER,
+        help="Power (exponent) to raise preferences by."
+    )
+    parser.add_argument(
         "--maxtime", type=float, default=DEFAULT_MAX_SECONDS,
         help="Maximum time (in seconds) to run MIP optimizer for"
     )
@@ -1559,6 +1641,11 @@ first row is the title row):
         "--output", type=str,
         help="Optional filename to write output to. "
              "Output types supported: " + str(OUTPUT_TYPES_SUPPORTED)
+    )
+    parser.add_argument(
+        "--student_must_have_choice", action="store_true",
+        help="Prevent students being allocated to projects they've not "
+             "explicitly ranked?"
     )
     parser.add_argument(
         "--allow_student_preference_ties", action="store_true",
@@ -1593,24 +1680,40 @@ first row is the title row):
     random.seed(RNG_SEED)
 
     # Go
-    problem = Problem.read_data(
-        args.filename,
+    config = Config(
+        filename=args.filename,
+        allow_defunct_projects=args.allow_defunct_projects,
         allow_student_preference_ties=args.allow_student_preference_ties,
         allow_supervisor_preference_ties=args.allow_supervisor_preference_ties,
         missing_eligibility=args.missing_eligibility,
-        allow_defunct_projects=args.allow_defunct_projects,
+        preference_power=args.preference_power,
+        student_must_have_choice=args.student_must_have_choice,
+        cmd_args=vars(args)
     )
-    log.info(problem)
+    log.info(f"Config: {config}")
+    problem = Problem.read_data(config)
+    if args.output:
+        log.debug(problem)
+    else:
+        log.info(problem)
     solution = problem.best_solution(
         supervisor_weight=args.supervisor_weight,
         max_time_s=args.maxtime,
     )
-    log.info(solution)
-    if args.output:
-        solution.write_data(args.output)
+    if solution:
+        if args.output:
+            log.debug(solution)
+        else:
+            log.info(solution)
+        if args.output:
+            solution.write_data(args.output)
+        else:
+            log.warning(
+                "Output not saved. Specify the --output option for that.")
+        sys.exit(EXIT_SUCCESS)
     else:
-        log.warning("Output not saved. Specify the --output option for that.")
-    sys.exit(EXIT_SUCCESS)
+        log.error("No solution found!")
+        sys.exit(EXIT_FAILURE)
 
 
 if __name__ == "__main__":
