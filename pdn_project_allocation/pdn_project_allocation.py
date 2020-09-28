@@ -224,9 +224,12 @@ class Config(object):
             allow_defunct_projects: bool = False,
             allow_student_preference_ties: bool = False,
             allow_supervisor_preference_ties: bool = False,
+            gale_shapley: bool = False,
+            max_time_s: float = DEFAULT_MAX_SECONDS,
             missing_eligibility: bool = None,
             preference_power: float = DEFAULT_PREFERENCE_POWER,
             student_must_have_choice: bool = False,
+            supervisor_weight: float = DEFAULT_SUPERVISOR_WEIGHT,
             cmd_args: Dict[str, Any] = None) -> None:
         """
         Reads a file, autodetecting its format, and returning the
@@ -234,13 +237,19 @@ class Config(object):
 
         Args:
             filename:
-                File to read.
+                Source data file to read.
+
             allow_defunct_projects:
                 Allow projects that permit no students?
             allow_student_preference_ties:
                 Allow students to express preference ties?
             allow_supervisor_preference_ties:
                 Allow supervisors to express preference ties?
+            gale_shapley:
+                Use the Gale-Shapley algorithm, with students as "proposers",
+                rather than dissatisfaction minimization.
+            max_time_s:
+                Time limit for MIP optimizer (s).
             missing_eligibility:
                 Use ``True`` or ``False`` to treat missing eligibility cells
                 as meaning "eligible" or "ineligible", respectively, or
@@ -250,16 +259,25 @@ class Config(object):
             student_must_have_choice:
                 Prevent students being allocated to projects they've not
                 explicitly ranked?
+            supervisor_weight:
+                Weight allocated to supervisor preferences; range [0, 1].
+                (Student preferences are weighted as 1 minus this.)
+
             cmd_args:
                 Copy of command-line arguments
         """
         self.filename = filename
+
         self.allow_defunct_projects = allow_defunct_projects
         self.allow_student_preference_ties = allow_student_preference_ties
         self.allow_supervisor_preference_ties = allow_supervisor_preference_ties  # noqa
+        self.gale_shapley = gale_shapley
         self.missing_eligibility = missing_eligibility
         self.preference_power = preference_power
         self.student_must_have_choice = student_must_have_choice
+        self.supervisor_weight = supervisor_weight
+        self.max_time_s = max_time_s
+
         self.cmd_args = cmd_args
 
     def __str__(self) -> str:
@@ -1195,6 +1213,10 @@ class Problem(object):
         self.projects.sort()
         random.shuffle(self.projects)
 
+    # -------------------------------------------------------------------------
+    # Representations
+    # -------------------------------------------------------------------------
+
     def __str__(self) -> str:
         """
         We re-sort the output for display purposes.
@@ -1210,6 +1232,10 @@ class Problem(object):
             f"\n"
             f"- Eligibility:\n\n{self.eligibility}\n"
         )
+
+    # -------------------------------------------------------------------------
+    # Information
+    # -------------------------------------------------------------------------
 
     def sorted_students(self) -> List[Student]:
         """
@@ -1235,153 +1261,9 @@ class Problem(object):
         """
         return len(self.projects)
 
-    def _make_solution(self,
-                       project_indexes: Sequence[int],
-                       supervisor_weight: float,
-                       validate: bool = True) -> Solution:
-        """
-        Creates a solution from project index numbers.
-
-        Args:
-            project_indexes:
-                Indexes (zero-based) of project numbers, one per student,
-                in the order of ``self.students``.
-            validate:
-                validate input? For debugging only.
-        """
-        if validate:
-            n_students = len(self.students)
-            assert len(project_indexes) == n_students, (
-                "Number of project indices does not match number of students"
-            )
-        allocation = {}  # type: Dict[Student, Project]
-        for student_idx, project_idx in enumerate(project_indexes):
-            allocation[self.students[student_idx]] = self.projects[project_idx]
-        return Solution(problem=self, allocation=allocation,
-                        supervisor_weight=supervisor_weight)
-
-    def best_solution(self,
-                      supervisor_weight: float = DEFAULT_SUPERVISOR_WEIGHT,
-                      max_time_s: float = DEFAULT_MAX_SECONDS) \
-            -> Optional[Solution]:
-        """
-        Return the best solution.
-
-        Optimize with the MIP package.
-        This is extremely impressive.
-        See https://python-mip.readthedocs.io/.
-
-        Args:
-            supervisor_weight:
-                Weight allocated to supervisor preferences; range [0, 1].
-                (Student preferences are weighted as 1 minus this.)
-            max_time_s:
-                Time limit for optimizer (s).
-        """
-        def varname(s_: int, p_: int) -> str:
-            """
-            Makes it easier to create/retrieve model variables.
-            The indexes are s for student index, p for project index.
-            """
-            return f"x[{s_},{p_}]"
-
-        assert 0 <= supervisor_weight <= 1
-        student_weight = 1 - supervisor_weight
-        log.info(
-            f"MIP approach giving student preferences weight {student_weight} "
-            f"and supervisor preferences weight {supervisor_weight}")
-        n_students = len(self.students)
-        n_projects = len(self.projects)
-
-        # Eligibility map
-        eligible = [
-            [
-                self.eligibility.is_eligible(student, project)
-                for p, project in enumerate(self.projects)  # second index
-            ]
-            for s, student in enumerate(self.students)  # first index
-        ]  # indexed s, p
-
-        # Dissatisfaction scores for each project
-        # CAUTION: get indexes the right way round!
-        weighted_dissatisfaction = [
-            [
-                (
-                    student_weight *
-                    self.students[s].exponentiated_dissatisfaction(self.projects[p]) +  # noqa
-                    supervisor_weight *
-                    self.projects[p].exponentiated_dissatisfaction(self.students[s])  # noqa
-                )
-                for p in range(n_projects)  # second index
-            ]
-            for s in range(n_students)  # first index
-        ]  # indexed s, p
-
-        # Model
-        m = Model("Student project allocation")
-        # Binary variables to optimize, each linking a student to a project
-        # CAUTION: get indexes the right way round!
-        x = [
-            [
-                (
-                    m.add_var(varname(s, p), var_type=BINARY)
-                    if eligible[s][p] else None
-                )
-                for p in range(n_projects)  # second index
-            ]
-            for s in range(n_students)  # first index
-        ]  # indexed s, p
-
-        # Objective: happy students/supervisors
-        m.objective = minimize(xsum(
-            x[s][p] * weighted_dissatisfaction[s][p]
-            for p in range(n_projects)
-            for s in range(n_students)
-            if eligible[s][p]
-        ))
-
-        # Constraints
-        # - For each student, exactly one project:
-        for s in range(n_students):
-            m += xsum(x[s][p]
-                      for p in range(n_projects)
-                      if eligible[s][p]) == 1
-        # - For each project, up to the maximum number of students:
-        for p, project in enumerate(self.projects):
-            m += xsum(x[s][p]
-                      for s in range(n_students)
-                      if eligible[s][p]) <= project.max_n_students
-
-        # Optimize
-        m.optimize(max_seconds=max_time_s)
-
-        # Extract results
-        if not m.num_solutions:
-            return None
-        # for s in range(n_students):
-        #     for p in range(n_projects):
-        #         log.debug(f"x[{s}][{p}].x = {x[s][p].x}")
-        # self._debug_model_vars(m)
-        project_indexes = [
-            next(p for p in range(n_projects)
-                 # if m.var_by_name(varname(s, p)).x >= ALMOST_ONE)
-                 if eligible[s][p] and x[s][p].x >= ALMOST_ONE)
-            # ... note that the value of a solved variable is var.x
-            # If those two expressions are not the same, there's a bug.
-            for s in range(n_students)
-        ]
-        return self._make_solution(project_indexes,
-                                   supervisor_weight=supervisor_weight)
-
-    @staticmethod
-    def _debug_model_vars(m: Model) -> None:
-        """
-        Show the names/values of model variables after fitting.
-        """
-        lines = [f"Variables in model {m.name!r}:"]
-        for v in m.vars:
-            lines.append(f"{v.name} == {v.x}")
-        log.debug("\n".join(lines))
+    # -------------------------------------------------------------------------
+    # Read data
+    # -------------------------------------------------------------------------
 
     @classmethod
     def read_data(cls, config: Config) -> "Problem":
@@ -1407,9 +1289,9 @@ class Problem(object):
         wb = load_workbook(config.filename, read_only=True, keep_vba=False,
                            data_only=True,  keep_links=False)
 
-        # ---------------------------------------------------------------------
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         # Projects
-        # ---------------------------------------------------------------------
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
         log.info("... reading projects...")
         projects = []  # type: List[Project]
@@ -1449,9 +1331,9 @@ class Problem(object):
         assert n_projects, "No projects defined!"
         log.info(f"Number of projects: {n_projects}")
 
-        # ---------------------------------------------------------------------
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         # Students with their preferences
-        # ---------------------------------------------------------------------
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
         log.info("... reading students and their preferences...")
         students = []  # type: List[Student]
@@ -1502,9 +1384,9 @@ class Problem(object):
         log.info(f"Number of students: {n_students}")
         assert n_students >= 1
 
-        # ---------------------------------------------------------------------
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         # Supervisor preferences, stored with their project object
-        # ---------------------------------------------------------------------
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
         log.info("... reading supervisor preferences...")
         ws_supervisorprefs = wb[SheetNames.SUPERVISOR_PREFERENCES]  # type: Worksheet  # noqa
@@ -1568,9 +1450,9 @@ class Problem(object):
         del _sn_from_sheet
         del _sn_from_students
 
-        # ---------------------------------------------------------------------
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         # Eligibility
-        # ---------------------------------------------------------------------
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
         log.info("... reading eligibility...")
         eligibility = Eligibility(
@@ -1629,15 +1511,19 @@ class Problem(object):
             del _sn_from_sheet
             del _sn_from_students
 
-        # ---------------------------------------------------------------------
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         # Create and return the Problem object
-        # ---------------------------------------------------------------------
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
         log.info("... finished reading")
         return Problem(projects=projects,
                        students=students,
                        eligibility=eligibility,
                        config=config)
+
+    # -------------------------------------------------------------------------
+    # Save data
+    # -------------------------------------------------------------------------
 
     # noinspection DuplicatedCode
     def write_to_xlsx_workbook(self, wb: Workbook) -> None:
@@ -1712,6 +1598,181 @@ class Problem(object):
                 [s.name] + [int(self.eligibility.is_eligible(s, p))
                             for p in sorted_projects]
             )
+
+    # -------------------------------------------------------------------------
+    # Internals for solvers
+    # -------------------------------------------------------------------------
+
+    def _make_solution(self,
+                       project_indexes: Sequence[int],
+                       supervisor_weight: float,
+                       validate: bool = True) -> Solution:
+        """
+        Creates a solution from project index numbers.
+
+        Args:
+            project_indexes:
+                Indexes (zero-based) of project numbers, one per student,
+                in the order of ``self.students``.
+            validate:
+                validate input? For debugging only.
+        """
+        if validate:
+            n_students = len(self.students)
+            assert len(project_indexes) == n_students, (
+                "Number of project indices does not match number of students"
+            )
+        allocation = {}  # type: Dict[Student, Project]
+        for student_idx, project_idx in enumerate(project_indexes):
+            allocation[self.students[student_idx]] = self.projects[project_idx]
+        return Solution(problem=self, allocation=allocation,
+                        supervisor_weight=supervisor_weight)
+
+    # -------------------------------------------------------------------------
+    # Solver entry point
+    # -------------------------------------------------------------------------
+
+    def best_solution(self) -> Optional[Solution]:
+        """
+        Return the best solution.
+        """
+        if self.config.gale_shapley:
+            return self.best_solution_gale_shapley()
+        else:
+            return self.best_solution_mip()
+
+    # -------------------------------------------------------------------------
+    # Solve via MIP
+    # -------------------------------------------------------------------------
+
+    def best_solution_mip(self) -> Optional[Solution]:
+        """
+        Return the best solution by optimizing with the MIP package.
+        This is extremely impressive.
+        See https://python-mip.readthedocs.io/.
+        """
+        def varname(s_: int, p_: int) -> str:
+            """
+            Makes it easier to create/retrieve model variables.
+            The indexes are s for student index, p for project index.
+            """
+            return f"x[{s_},{p_}]"
+
+        supervisor_weight = self.config.supervisor_weight
+
+        assert 0 <= supervisor_weight <= 1
+        student_weight = 1 - supervisor_weight
+        log.info(
+            f"MIP approach giving student preferences weight {student_weight} "
+            f"and supervisor preferences weight {supervisor_weight}")
+        n_students = len(self.students)
+        n_projects = len(self.projects)
+
+        # Eligibility map
+        eligible = [
+            [
+                self.eligibility.is_eligible(student, project)
+                for p, project in enumerate(self.projects)  # second index
+            ]
+            for s, student in enumerate(self.students)  # first index
+        ]  # indexed s, p
+
+        # Dissatisfaction scores for each project
+        # CAUTION: get indexes the right way round!
+        weighted_dissatisfaction = [
+            [
+                (
+                    student_weight *
+                    self.students[s].exponentiated_dissatisfaction(self.projects[p]) +  # noqa
+                    supervisor_weight *
+                    self.projects[p].exponentiated_dissatisfaction(self.students[s])  # noqa
+                )
+                for p in range(n_projects)  # second index
+            ]
+            for s in range(n_students)  # first index
+        ]  # indexed s, p
+
+        # Model
+        m = Model("Student project allocation")
+        # Binary variables to optimize, each linking a student to a project
+        # CAUTION: get indexes the right way round!
+        x = [
+            [
+                (
+                    m.add_var(varname(s, p), var_type=BINARY)
+                    if eligible[s][p] else None
+                )
+                for p in range(n_projects)  # second index
+            ]
+            for s in range(n_students)  # first index
+        ]  # indexed s, p
+
+        # Objective: happy students/supervisors
+        m.objective = minimize(xsum(
+            x[s][p] * weighted_dissatisfaction[s][p]
+            for p in range(n_projects)
+            for s in range(n_students)
+            if eligible[s][p]
+        ))
+
+        # Constraints
+        # - For each student, exactly one project:
+        for s in range(n_students):
+            m += xsum(x[s][p]
+                      for p in range(n_projects)
+                      if eligible[s][p]) == 1
+        # - For each project, up to the maximum number of students:
+        for p, project in enumerate(self.projects):
+            m += xsum(x[s][p]
+                      for s in range(n_students)
+                      if eligible[s][p]) <= project.max_n_students
+
+        # Optimize
+        m.optimize(max_seconds=self.config.max_time_s)
+
+        # Extract results
+        if not m.num_solutions:
+            return None
+        # for s in range(n_students):
+        #     for p in range(n_projects):
+        #         log.debug(f"x[{s}][{p}].x = {x[s][p].x}")
+        # self._debug_model_vars(m)
+        project_indexes = [
+            next(p for p in range(n_projects)
+                 # if m.var_by_name(varname(s, p)).x >= ALMOST_ONE)
+                 if eligible[s][p] and x[s][p].x >= ALMOST_ONE)
+            # ... note that the value of a solved variable is var.x
+            # If those two expressions are not the same, there's a bug.
+            for s in range(n_students)
+        ]
+        return self._make_solution(project_indexes,
+                                   supervisor_weight=supervisor_weight)
+
+    @staticmethod
+    def _debug_model_vars(m: Model) -> None:
+        """
+        Show the names/values of model variables after fitting.
+        """
+        lines = [f"Variables in model {m.name!r}:"]
+        for v in m.vars:
+            lines.append(f"{v.name} == {v.x}")
+        log.debug("\n".join(lines))
+
+    # -------------------------------------------------------------------------
+    # Solve via Gale-Shapley
+    # -------------------------------------------------------------------------
+
+    def best_solution_gale_shapley(self) -> Optional[Solution]:
+        """
+        Optimize via the Gale-Shapley algorithm, with students as "proposers"
+        (to give them the advantage).
+
+        See
+
+        - https://en.wikipedia.org/wiki/Gale%E2%80%93Shapley_algorithm
+        - https://www.nrmp.org/nobel-prize/
+        """
+        raise NotImplementedError
 
 
 # =============================================================================
@@ -1851,6 +1912,11 @@ first row is the title row):
              "tempts the operator to re-run with different seeds). "
              "FOR DEBUGGING USE ONLY."
     )
+    method_group.add_argument(
+        "--gs", action="store_true",
+        help="Use the Gale-Shapley algorithm, with students as 'proposers', "
+             "instead of dissatisfaction minimization. EXPERIMENTAL"
+    )
 
     args = parser.parse_args()
     main_only_quicksetup_rootlogger(level=logging.DEBUG if args.verbose
@@ -1874,7 +1940,10 @@ first row is the title row):
         missing_eligibility=args.missing_eligibility,
         preference_power=args.preference_power,
         student_must_have_choice=args.student_must_have_choice,
-        cmd_args=vars(args)
+        cmd_args=vars(args),
+        gale_shapley=args.gs,
+        supervisor_weight=args.supervisor_weight,
+        max_time_s=args.maxtime,
     )
     log.info(f"Config: {config}")
     problem = Problem.read_data(config)
@@ -1882,10 +1951,7 @@ first row is the title row):
         log.debug(problem)
     else:
         log.info(problem)
-    solution = problem.best_solution(
-        supervisor_weight=args.supervisor_weight,
-        max_time_s=args.maxtime,
-    )
+    solution = problem.best_solution()
     if solution:
         if args.output:
             log.debug(solution)
