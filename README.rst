@@ -8,7 +8,7 @@ pdn_project_allocation
 Allocates projects for the Department of Physiology, Development, and
 Neuroscience, University of Cambridge.
 
-By Rudolf Cardinal (rudolf@pobox.com).
+By Rudolf Cardinal (rudolf@pobox.com), Department of Psychiatry.
 
 
 Licence
@@ -64,9 +64,9 @@ Description of the problem
 - Supervisors can also express preferences. The overall balance between
   "student satisfaction" and "supervisor satisfaction" is set by a parameter.
 
-- Some student/project combinations can be marked as ineligible (e.g. student
-  doesn't have the necessary background, no matter how much they might want
-  the project).
+- Some student/project combinations can be marked as ineligible (e.g. a student
+  might not have the necessary background, no matter how much they want the
+  project).
 
 
 Explanation of how this program works
@@ -104,29 +104,31 @@ Explanation of how this program works
 - Alternatively, I might choose to rank only 5 (or the course administrator
   might permit only this). In that case, I will have "used" up scores 1, 2, 3,
   4, and 5 (totalling 15). I will then have 15 unranked projects, and 195
-  unallocated dissatisfaction points. In this situation, all those 15 projects
-  will be given a dissatisfaction score of 195/15 = 13.
+  unallocated dissatisfaction points. In this situation, each of those 15
+  projects will be given a dissatisfaction score of 195/15 = 13.
 
 - If the adminstrator permits, I might also express ties. For example, I might
   express "joint second and third" by giving preferences 1, 2.5, 2.5, 4, 5.
 
-- The program enforces the requirement that the scores for all the projects
-  (those explicitly ranked and those ranked by default) add up to the total
-  dissatisfaction (210 in this example). It also enforces that students can
-  only allocate "from the best upwards in rank" -- for example, if the student
-  expresses 5 preferences, those scores must add up to 15.
+- The program enforces the requirement that a student's scores for all the
+  projects (those explicitly ranked and those ranked by default) must add up to
+  the total dissatisfaction (210 in this example). It also enforces that
+  students can only allocate "from the best upwards in rank" -- for example, if
+  the student expresses 5 preferences, those scores must add up to 15 (you
+  can't say "1, 2, 3, 4, 6").
 
-- Supervisor preferences are handled in exactly the same way. Supervisors can
-  rank all students, or rank some (being indifferent between the others), or
-  not rank anyone (having no preference between any students). Their
-  dissatisfaction scores are calculated in exactly the same way.
+- Supervisor preferences are handled in exactly the same way. Each project
+  supervisor can rank all of the students, or rank some (being indifferent
+  between the others), or not rank anyone (having no preference between any
+  students). Their dissatisfaction scores are calculated in exactly the same
+  way.
 
 If you are trying to express that "the student absolutely cannot do this
 project", see *eligibility* above.
 
 If you're the course administrator, consider letting students and supervisors
-express as many preferences as they want; it won't cause any harm and may
-sometimes help (if competition is fierce for projects).
+express as many preferences as they want. It won't cause any harm and may
+sometimes help, if competition is fierce for projects.
 
 **Optimization**
 
@@ -156,12 +158,13 @@ sometimes help (if competition is fierce for projects).
 - It is almost guaranteed, as a reflection of human nature, that students and
   supervisors who didn't get what they wanted will complain about the results
   (or the method). Anticipate this by getting everyone to agree to the
-  procedure in advance (ensuring that supervisors are clear about any absolute
-  eligibility criteria, and agreeing to accept the result).
+  procedure in advance. Ensure that supervisors are clear about any absolute
+  eligibility criteria, convey these to the administrator along with their
+  preferences, and agree to accept the result.
 
-- If you run the program several times with the same input, you get the same
-  answers. (It would be unfair otherwise: there would be a temptation to keep
-  "flipping the coin" until the operator gets the answer they want). The
+- If you run the program several times with the same input, you will get the
+  same answers. (It would be unfair otherwise: there would be a temptation to
+  keep "flipping the coin" until the operator gets the answer they want.) The
   program achieves this by shuffling its inputs in a "deterministic random" way
   (via a random number generator seed).
 
@@ -173,7 +176,8 @@ sometimes help (if competition is fierce for projects).
   allocated to projects that they've explicitly ranked. (For example, if a
   student chose 5 most-preferred projects, only those projects can be allocated
   to that student.) However, this may cause the algorithm to fail: there may be
-  no such solution. If it fails, the program will say so.
+  no such solution. (It is also open to "gaming" if a student is allowed to
+  enter only one preference!) If it fails, the program will say so.
 
 - By default, a dissatisfaction score of 2 is "twice as bad" as a score of 1
   (dissatisfaction is linear). Optionally, the course administrator may set
