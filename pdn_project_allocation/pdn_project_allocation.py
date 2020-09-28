@@ -1809,13 +1809,26 @@ first row is the title row):
         "--maxtime", type=float, default=DEFAULT_MAX_SECONDS,
         help="Maximum time (in seconds) to run MIP optimizer for"
     )
+    technical_group.add_argument(
+        "--seed", type=int, default=None,
+        help="Seed for random number generator. "
+             "DO NOT USE FOR ACTUAL ALLOCATIONS; IT IS UNFAIR (because it "
+             "tempts the operator to re-run with different seeds). "
+             "FOR DEBUGGING USE ONLY."
+    )
 
     args = parser.parse_args()
     main_only_quicksetup_rootlogger(level=logging.DEBUG if args.verbose
                                     else logging.INFO)
 
     # Seed RNG
-    random.seed(RNG_SEED)
+    if args.seed is not None:
+        log.warning("You have specified --seed. FOR DEBUGGING USE ONLY: "
+                    "THIS IS NOT FAIR FOR REAL ALLOCATIONS!")
+        seed = args.seed
+    else:
+        seed = RNG_SEED
+    random.seed(seed)
 
     # Go
     config = Config(
