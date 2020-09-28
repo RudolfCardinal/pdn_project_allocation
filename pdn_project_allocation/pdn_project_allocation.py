@@ -5,6 +5,41 @@ pdn_project_allocation/pdn_project_allocation.py
 
 See README.rst
 
+Development notes
+-----------------
+
+Slightly tricky question: optimizing mean versus variance.
+
+- Dissatisfaction mean: lower is better, all else being equal.
+- Dissatisfaction variance: lower is better, all else being equal.
+- So we have two options:
+
+  - Optimize mean, then use variance as tie-breaker.
+  - Optimize a weighted combination of mean and variance.
+
+- Note that "least variance" itself is a rubbish proposition; that can mean
+  "consistently bad".
+
+- The choice depends whether greater equality can outweight slightly worse
+  mean (dis)satisfaction. I've not found a good example of this. Optimizing
+  mean happiness seems to be fine.
+
+- Since moving to a MILP method (see below), we just optimize total weighted
+  dissatisfaction.
+
+Consistency:
+
+- For the old brute-force approach, there was a need to break ties randomly,
+  e.g. in the case of two projects with both students ranking the first project
+  top. Consistency is important and lack of bias (e.g. alphabetical bias) is
+  important, so we (a) set a consistent random number seed; (b)
+  deterministically and then randomly sort the students; (c) run the optimizer.
+  This gives consistent results and does not depend on e.g. alphabetical
+  ordering, who comes first in the spreadsheet, etc. (No such effort is applied
+  to project ordering.)
+
+- The new MILP method also seems to be consistent.
+
 """
 
 import argparse
@@ -273,7 +308,7 @@ class Preferences(object):
         self._n_options = n_options
         self._preferences = OrderedDict()  # type: Dict[Any, Union[int, float]]
         self._owner = owner
-        self._available_dissatisfaction = sum_of_integers_in_inclusive_range(
+        self._total_dissatisfaction = sum_of_integers_in_inclusive_range(
             1, n_options)
         self._allocated_dissatisfaction = 0
         self._allow_ties = allow_ties
@@ -363,11 +398,11 @@ class Preferences(object):
             f"preferences)"
         )
         assert (
-            self._allocated_dissatisfaction <= self._available_dissatisfaction
+            self._allocated_dissatisfaction <= self._total_dissatisfaction
         ), (
             f"Dissatisfaction scores add up to "
             f"{self._allocated_dissatisfaction}, which is more than the "
-            f"maximum available of {self._available_dissatisfaction} "
+            f"maximum available of {self._total_dissatisfaction} "
             f"(for {self._n_options} options)"
         )
 
@@ -377,7 +412,7 @@ class Preferences(object):
         The amount of available "dissatisfaction", not yet allocated to an
         item (see :class:`Preferences`).
         """
-        return self._available_dissatisfaction - self._allocated_dissatisfaction  # noqa
+        return self._total_dissatisfaction - self._allocated_dissatisfaction
 
     @property
     def _unranked_item_dissatisfaction(self) -> Optional[float]:
