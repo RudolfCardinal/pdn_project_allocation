@@ -15,7 +15,7 @@ import logging
 import operator
 import os
 import random
-from statistics import mean, variance
+from statistics import mean, median, variance
 import sys
 from typing import (Any, Dict, Generator, List, Optional, Sequence,
                     Tuple, Union)
@@ -630,6 +630,10 @@ class Solution(object):
         self.allocation = allocation
         self.supervisor_weight = supervisor_weight
 
+    # -------------------------------------------------------------------------
+    # Representations
+    # -------------------------------------------------------------------------
+
     def __str__(self) -> str:
         """
         String representation.
@@ -643,14 +647,18 @@ class Solution(object):
                 f"(student dissatisfaction {std}; "
                 f"supervisor dissatisfaction {svd})")
         lines.append("")
-        lines.append(f"Student dissatisfaction mean: "
-                     f"{self.student_dissatisfaction_mean()}")
-        lines.append(f"Student dissatisfaction variance: "
-                     f"{self.student_dissatisfaction_variance()}")
-        lines.append(f"Supervisor dissatisfaction mean: "
-                     f"{self.supervisor_dissatisfaction_mean()}")
-        lines.append(f"Supervisor dissatisfaction variance: "
-                     f"{self.supervisor_dissatisfaction_variance()}")
+        lines.append(
+            f"Student dissatisfaction mean: "
+            f"{self.student_dissatisfaction_mean()}")
+        lines.append(
+            f"Student dissatisfaction variance: "
+            f"{self.student_dissatisfaction_variance()}")
+        lines.append(
+            f"Supervisor dissatisfaction (with each student) mean: "
+            f"{self.supervisor_dissatisfaction_mean()}")
+        lines.append(
+            f"Supervisor dissatisfaction (with each student) variance: "
+            f"{self.supervisor_dissatisfaction_variance()}")
         return "\n".join(lines)
 
     def shortdesc(self) -> str:
@@ -665,6 +673,10 @@ class Solution(object):
             f", student dissatisfaction {self.student_dissatisfaction_scores()}"
         )
 
+    # -------------------------------------------------------------------------
+    # Internals
+    # -------------------------------------------------------------------------
+
     def _gen_student_project_pairs(self) -> Generator[Tuple[Student, Project],
                                                       None, None]:
         """
@@ -675,6 +687,10 @@ class Solution(object):
             project = self.allocation[student]
             yield student, project
 
+    # -------------------------------------------------------------------------
+    # Student dissatisfaction
+    # -------------------------------------------------------------------------
+
     def student_dissatisfaction_scores(self) -> List[float]:
         """
         All dissatisfaction scores.
@@ -684,6 +700,12 @@ class Solution(object):
             project = self.allocation[student]
             dscores.append(student.dissatisfaction(project))
         return dscores
+
+    def student_dissatisfaction_median(self) -> float:
+        """
+        Median dissatisfaction per student.
+        """
+        return median(self.student_dissatisfaction_scores())
 
     def student_dissatisfaction_mean(self) -> float:
         """
@@ -697,9 +719,27 @@ class Solution(object):
         """
         return variance(self.student_dissatisfaction_scores())
 
-    def supervisor_dissatisfaction_scores(self) -> List[float]:
+    def student_dissatisfaction_min(self) -> float:
         """
-        All dissatisfaction scores.
+        Minimum of dissatisfaction scores.
+        """
+        return min(self.student_dissatisfaction_scores())
+
+    def student_dissatisfaction_max(self) -> float:
+        """
+        Maximum of dissatisfaction scores.
+        """
+        return max(self.student_dissatisfaction_scores())
+
+    # -------------------------------------------------------------------------
+    # Supervisor dissatisfaction
+    # -------------------------------------------------------------------------
+
+    def supervisor_dissatisfaction_scores_sum_students(self) -> List[float]:
+        """
+        All dissatisfaction scores. (If a project has several students, it
+        scores the SUM of its dissatisfaction for each of those students
+        scores.)
         """
         dscores = []  # type: List[float]
         for project in self.problem.projects:
@@ -710,23 +750,61 @@ class Solution(object):
             dscores.append(dscore)
         return dscores
 
+    def supervisor_dissatisfaction_scores_each_student(self) -> List[float]:
+        """
+        All dissatisfaction scores. (If a project has several students,
+        multiple scores are returned for that project.)
+        """
+        dscores = []  # type: List[float]
+        for project in self.problem.projects:
+            for student in self.problem.students:
+                if self.allocation[student] == project:
+                    dscores.append(project.dissatisfaction(student))
+        return dscores
+
+    def supervisor_dissatisfaction_median(self) -> float:
+        """
+        Median dissatisfaction per student.
+        """
+        return median(self.supervisor_dissatisfaction_scores_each_student())
+
     def supervisor_dissatisfaction_mean(self) -> float:
         """
         Mean dissatisfaction per student.
         """
-        return mean(self.supervisor_dissatisfaction_scores())
+        return mean(self.supervisor_dissatisfaction_scores_each_student())
 
     def supervisor_dissatisfaction_variance(self) -> float:
         """
         Variance of dissatisfaction scores.
         """
-        return variance(self.supervisor_dissatisfaction_scores())
+        return variance(self.supervisor_dissatisfaction_scores_each_student())
+
+    def supervisor_dissatisfaction_min(self) -> float:
+        """
+        Minimum of dissatisfaction scores.
+        """
+        return min(self.supervisor_dissatisfaction_scores_each_student())
+
+    def supervisor_dissatisfaction_max(self) -> float:
+        """
+        Maximum of dissatisfaction scores.
+        """
+        return max(self.supervisor_dissatisfaction_scores_each_student())
+
+    # -------------------------------------------------------------------------
+    # Allocations
+    # -------------------------------------------------------------------------
 
     def allocated_students(self, project: Project) -> List[Student]:
         """
         Which students were allocated to this project?
         """
         return sorted(k for k, v in self.allocation.items() if v == project)
+
+    # -------------------------------------------------------------------------
+    # Saving
+    # -------------------------------------------------------------------------
 
     def write_xlsx(self, filename: str) -> None:
         """
@@ -740,9 +818,9 @@ class Solution(object):
         log.info(f"Writing output to: {filename}")
         wb = Workbook(write_only=True)  # doesn't create default sheet
 
-        # ---------------------------------------------------------------------
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         # Allocations, by student
-        # ---------------------------------------------------------------------
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         ss = wb.create_sheet(SheetNames.STUDENT_ALLOCATIONS)
         ss.append([
             "Student number",
@@ -760,9 +838,9 @@ class Solution(object):
                 student.dissatisfaction(project),
             ])
 
-        # ---------------------------------------------------------------------
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         # Allocations, by project
-        # ---------------------------------------------------------------------
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         ps = wb.create_sheet(SheetNames.PROJECT_ALLOCATIONS)
         ps.append([
             "Project number",
@@ -795,9 +873,9 @@ class Solution(object):
                 ", ".join(str(x) for x in supervisor_dissatisfactions),
             ])
 
-        # ---------------------------------------------------------------------
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         # Popularity of projects
-        # ---------------------------------------------------------------------
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         pp = wb.create_sheet(SheetNames.PROJECT_POPULARITY)
         pp.append([
             "Project number",
@@ -836,9 +914,9 @@ class Solution(object):
                 allocated_students,
             ])
 
-        # ---------------------------------------------------------------------
-        # Software and settings information
-        # ---------------------------------------------------------------------
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        # Software, settings, and summary information
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         zs = wb.create_sheet(SheetNames.INFORMATION)
         zs_rows = [
             ["SOFTWARE DETAILS"],
@@ -862,21 +940,34 @@ class Solution(object):
             [],
             ["SUMMARY STATISTICS"],
             [],
+            ["Student dissatisfaction median",
+             self.student_dissatisfaction_median()],
             ["Student dissatisfaction mean",
              self.student_dissatisfaction_mean()],
             ["Student dissatisfaction variance",
              self.student_dissatisfaction_variance()],
-            ["Supervisor dissatisfaction mean",
+            ["Student dissatisfaction minimum",
+             self.student_dissatisfaction_min()],
+            ["Student dissatisfaction minimum",
+             self.student_dissatisfaction_max()],
+            [],
+            ["Supervisor dissatisfaction (with each student) median",
+             self.supervisor_dissatisfaction_median()],
+            ["Supervisor dissatisfaction (with each student) mean",
              self.supervisor_dissatisfaction_mean()],
-            ["Supervisor dissatisfaction variance",
+            ["Supervisor dissatisfaction (with each student) variance",
              self.supervisor_dissatisfaction_variance()],
+            ["Supervisor dissatisfaction (with each student) minimum",
+             self.supervisor_dissatisfaction_min()],
+            ["Supervisor dissatisfaction (with each student) maximum",
+             self.supervisor_dissatisfaction_max()],
         ]
         for row in zs_rows:
             zs.append(row)
 
-        # ---------------------------------------------------------------------
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         # Problem definition
-        # ---------------------------------------------------------------------
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         self.problem.write_to_xlsx_workbook(wb)
 
         wb.save(filename)
