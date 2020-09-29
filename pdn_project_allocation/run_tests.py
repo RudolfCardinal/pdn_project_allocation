@@ -30,7 +30,11 @@ def process(infile: str, outfile: str,
         os.path.join(INPUTDIR, infile),
         "--output", os.path.join(OUTPUTDIR, outfile),
         "--verbose",
-        "--method", "abraham_student",
+
+        # "--method", "minimize_dissatisfaction_stable",
+        "--method", "minimize_dissatisfaction_stable_fallback",
+        # "--method", "abraham_student",
+
         # "--power", "3.0",
     ]
     if other_options:

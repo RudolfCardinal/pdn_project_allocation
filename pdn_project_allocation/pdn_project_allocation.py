@@ -140,6 +140,7 @@ import os
 import random
 from statistics import mean, median, variance
 import sys
+import traceback
 from typing import (Any, Dict, Generator, List, Optional, Sequence,
                     Tuple, Union)
 
@@ -162,7 +163,7 @@ from matching.games.student_allocation import (
     StudentAllocation as MGStudentAllocation,
     Supervisor as MGSupervisor,
 )
-from mip import BINARY, minimize, Model, xsum
+from mip import BINARY, minimize, Model, Var, xsum
 
 log = logging.getLogger(__name__)
 
@@ -268,8 +269,20 @@ class SheetHeadings(object):
 
 class OptimizeMethod(Enum, metaclass=CaseInsensitiveEnumMeta):
     MINIMIZE_DISSATISFACTION = "Minimize weighted dissatisfaction"
+    MINIMIZE_DISSATISFACTION_STABLE = (
+        "Minimize weighted dissatisfaction, requiring stability"
+    )
+    MINIMIZE_DISSATISFACTION_STABLE_FALLBACK = (
+        "Minimize weighted dissatisfaction, requiring stable if possible, "
+        "but falling back to unstable if not"
+    )
     ABRAHAM_STUDENT = "Abraham-Irving-Manlove 2007 (optimal for students)"
-    ABRAHAM_SUPERVISOR = "Abraham-Irving-Manlove 2007 (optimal for supervisors)"  # noqa
+    ABRAHAM_SUPERVISOR = (
+        "Abraham-Irving-Manlove 2007 (optimal for supervisors)"
+    )
+
+
+DEFAULT_METHOD = OptimizeMethod.MINIMIZE_DISSATISFACTION_STABLE_FALLBACK
 
 
 # =============================================================================
@@ -332,7 +345,7 @@ class Config(object):
             cmd_args: Dict[str, Any] = None,
             max_time_s: float = DEFAULT_MAX_SECONDS,
             missing_eligibility: bool = None,
-            optimize_method: OptimizeMethod = OptimizeMethod.MINIMIZE_DISSATISFACTION,  # noqa
+            optimize_method: OptimizeMethod = DEFAULT_METHOD,
             preference_power: float = DEFAULT_PREFERENCE_POWER,
             student_must_have_choice: bool = False,
             supervisor_weight: float = DEFAULT_SUPERVISOR_WEIGHT) -> None:
@@ -1032,13 +1045,13 @@ class Solution(object):
                 if not self.is_allocated(s, project):
                     yield s
 
-    def is_stable(self, all_failures: bool = True) -> Tuple[bool, str]:
+    def stability(self, describe_all_failures: bool = True) -> Tuple[bool, str]:
         """
-        Is the solution a stable match? See README.rst for discussion.
-        See also https://gist.github.com/joyrexus/9967709.
+        Is the solution a stable match, and if not, why not? See README.rst for
+        discussion. See also https://gist.github.com/joyrexus/9967709.
 
         Arguments:
-            all_failures:
+            describe_all_failures:
                 Show all reasons for failure.
 
         Returns:
@@ -1062,12 +1075,18 @@ class Solution(object):
                             f"current allocation of {alt_proj_student}."
                         )
                         stable = False
-                        if not all_failures:
+                        if not describe_all_failures:
                             return False, "\n\n".join(instability_reasons)
         if stable:
             return True, "[Stable]"
         else:
             return False, "\n\n".join(instability_reasons)
+
+    def is_stable(self) -> bool:
+        """
+        Is the solution a stable match?
+        """
+        return self.stability(describe_all_failures=False)[0]
 
     # -------------------------------------------------------------------------
     # Saving
@@ -1185,7 +1204,7 @@ class Solution(object):
         # Software, settings, and summary information
         # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         zs = wb.create_sheet(SheetNames.INFORMATION)
-        is_stable, instability_reason = self.is_stable()
+        is_stable, instability_reason = self.stability()
         zs_rows = [
             ["SOFTWARE DETAILS"],
             [],
@@ -1837,7 +1856,17 @@ class Problem(object):
         """
         method = self.config.optimize_method
         if method == OptimizeMethod.MINIMIZE_DISSATISFACTION:
-            return self.best_solution_mip()
+            return self.best_solution_mip(enforce_stability=False)
+        elif method == OptimizeMethod.MINIMIZE_DISSATISFACTION_STABLE:
+            return self.best_solution_mip(enforce_stability=True)
+        elif method == OptimizeMethod.MINIMIZE_DISSATISFACTION_STABLE_FALLBACK:
+            solution = self.best_solution_mip(enforce_stability=True)
+            if solution:
+                return solution
+            else:
+                log.warning("Stable solution not found. Falling back to "
+                            "overall best.")
+                return self.best_solution_mip(enforce_stability=False)
         elif method == OptimizeMethod.ABRAHAM_STUDENT:
             return self.best_solution_abraham(optimal="student")
         elif method == OptimizeMethod.ABRAHAM_SUPERVISOR:
@@ -1849,11 +1878,20 @@ class Problem(object):
     # Solve via MIP
     # -------------------------------------------------------------------------
 
-    def best_solution_mip(self) -> Optional[Solution]:
+    def best_solution_mip(
+            self,
+            enforce_stability: bool = False) -> Optional[Solution]:
         """
         Return the best solution by optimizing with the MIP package.
         This is extremely impressive.
         See https://python-mip.readthedocs.io/.
+
+        Args:
+            enforce_stability:
+                Ensure only stable "marriages" are produced (or fail entirely)?
+                Uses the stability constraint that is equation 4 of
+                Abeledo & Blum (1996,
+                https://doi.org/10.1016/0024-3795(95)00052-6).
         """
         def varname(s_: int, p_: int) -> str:
             """
@@ -1867,8 +1905,9 @@ class Problem(object):
         assert 0 <= supervisor_weight <= 1
         student_weight = 1 - supervisor_weight
         log.info(
-            f"MIP approach giving student preferences weight {student_weight} "
-            f"and supervisor preferences weight {supervisor_weight}")
+            f"MIP approach: student_weight={student_weight}, "
+            f"supervisor_weight={supervisor_weight}, "
+            f"enforce_stability={enforce_stability}")
         n_students = len(self.students)
         n_projects = len(self.projects)
 
@@ -1881,15 +1920,29 @@ class Problem(object):
             for s, student in enumerate(self.students)  # first index
         ]  # indexed s, p
 
-        # Dissatisfaction scores for each project
+        # Dissatisfaction scores for each project/student combination
         # CAUTION: get indexes the right way round!
+        student_dissatisfaction_with_project = [
+            [
+                self.students[s].exponentiated_dissatisfaction(self.projects[p])  # noqa
+                for p in range(n_projects)  # second index
+            ]
+            for s in range(n_students)  # first index
+        ]  # indexed s, p
+        project_dissatisfaction_with_student = [
+            [
+                self.projects[p].exponentiated_dissatisfaction(self.students[s])  # noqa
+                for p in range(n_projects)  # second index
+            ]
+            for s in range(n_students)  # first index
+        ]  # indexed s, p
         weighted_dissatisfaction = [
             [
                 (
                     student_weight *
-                    self.students[s].exponentiated_dissatisfaction(self.projects[p]) +  # noqa
+                    student_dissatisfaction_with_project[s][p] +
                     supervisor_weight *
-                    self.projects[p].exponentiated_dissatisfaction(self.students[s])  # noqa
+                    project_dissatisfaction_with_student[s][p]
                 )
                 for p in range(n_projects)  # second index
             ]
@@ -1930,6 +1983,49 @@ class Problem(object):
             m += xsum(x[s][p]
                       for s in range(n_students)
                       if eligible[s][p]) <= project.max_n_students
+        # - Only stable "marriages"?
+        if enforce_stability:
+            # Equation 4 of Abeledo & Blum (1996), as above: the stability
+            # constraint. We'll use their notation for clarity.
+            # When they say a >{x} b, they mean "x prefers a to b".
+            # Similarly, "a <{x} b" means "x prefers b to a".
+            for u in range(n_students):  # we'll say the student is "u"
+                for v in range(n_projects):  # project is "v"
+                    if not eligible[u][v]:
+                        continue
+                    student_dis = student_dissatisfaction_with_project[u][v]
+                    project_dis = project_dissatisfaction_with_student[u][v]
+                    other_project_vars = []  # type: List[Var]
+                    other_student_vars = []  # type: List[Var]
+                    for i in [_ for _ in range(n_projects) if _ != v]:  # "i"
+                        if not eligible[u][i]:
+                            continue
+                        if (student_dissatisfaction_with_project[u][i] <
+                                student_dis):
+                            # Student "u" prefers project "i" to project "v";
+                            # that is, i >{u} v.
+                            other_project_vars.append(x[u][i])
+                    for j in [_ for _ in range(n_students) if _ != u]:  # "j"
+                        if not eligible[j][v]:
+                            continue
+                        if (project_dissatisfaction_with_student[j][v] <
+                                project_dis):
+                            # Project "v" prefers student "j" to student "u";
+                            # that is, j >{v} u.
+                            other_student_vars.append(x[j][v])
+                            # I'm pretty sure they must mean x{j,v} not x{v,j},
+                            # since the variable x is always suffixed
+                            # {u-type-thing, v-type-thing}, e.g. page 323.
+                    vars_to_sum = (
+                        other_project_vars +  # sum{for i >{u} v}{x{u,i}}
+                        other_student_vars +  # sum{for j >{v} u}{x{j,v}}
+                        [x[u][v]]  # "x{u,v}"
+                    )
+                    stability_constraint = xsum(vars_to_sum) >= 1  # Eq. 4.
+                    log.debug(f"Adding stability constraint: "
+                              f"{stability_constraint}")
+                    m += stability_constraint
+            # What's the logic here?
 
         # Optimize
         m.optimize(max_seconds=self.config.max_time_s)
@@ -1949,7 +2045,10 @@ class Problem(object):
             # If those two expressions are not the same, there's a bug.
             for s in range(n_students)
         ]
-        return self._make_solution(project_indexes)
+        solution = self._make_solution(project_indexes)
+        if enforce_stability:
+            assert solution.is_stable()
+        return solution
 
     @staticmethod
     def _debug_model_vars(m: Model) -> None:
@@ -2275,7 +2374,7 @@ first row is the title row):
         OptimizeMethod, keys_to_lower=True)
     method_group.add_argument(
         "--method", type=str, choices=method_k,
-        default=OptimizeMethod.MINIMIZE_DISSATISFACTION.name,
+        default=DEFAULT_METHOD.name,
         help=f"Method of solving. -- {method_desc} --"
     )
 
@@ -2337,4 +2436,5 @@ if __name__ == "__main__":
         main()
     except Exception as _top_level_exception:
         log.critical(str(_top_level_exception))
+        log.critical(traceback.format_exc())
         sys.exit(EXIT_FAILURE)

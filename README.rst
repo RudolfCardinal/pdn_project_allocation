@@ -324,10 +324,17 @@ students are unassigned in all stable matchings", and their Algorithm 1 has
 a termination condition of "until every unassigned student has an empty
 preference list" (not that no students are unassigned!).
 
+We can go one step further, and enforce stability via integer linear
+programming, as per Abeledo & Blum (1996,
+https://doi.org/10.1016/0024-3795(95)00052-6 ). The outcome, perhaps
+predictable, was that real-world situations do not always allow stable
+solutions in which every student was allocated.
+
 Since we can't have any student unassigned, and we are now up to Aug 2020 in
-the research literature, I shall stop there and offer dissatisfaction
-minimization as the best practical option that I've come up with, despite the
-fact that it offers some unstable solutions.
+the research literature, I shall stop there and offer "dissatisfaction
+minimization within the constraint of stability, falling back to
+dissatisfaction minimization" as the best practical option that I've come up
+with, despite the fact that it offers some unstable solutions.
 
 
 Changelog
@@ -391,3 +398,5 @@ Changelog
     encourages fishing for the "right" result from the operator's perspective).
   - Improved README.
   - Options to use the AIM2007 algorithms, as above.
+  - Options to enforce stability via the MIP approach, and to try that but fall
+    back to the overall "least dissatisfaction" approach (now the default).
