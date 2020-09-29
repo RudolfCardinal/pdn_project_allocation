@@ -185,6 +185,150 @@ sometimes help, if competition is fierce for projects.
   (exponent). For example, an exponent of 2 would map dissatisfaction scores of
   {1, 2, 3, ...} to {1, 4, 9, ...} for the optimization step.
 
+**Disadvantages**
+
+- The solution is not always *stable* (the technical meaning of stability is
+  given below). However, at present, a supposedly optimal "stable" algorithm
+  does not provide projects for all the students with our Sep 2020 real-world
+  data (see below), so that's are not much use. The software will report and
+  explain any instability.
+
+
+Methodological considerations ("why not use the Nobel Prize-winning method?")
+-----------------------------------------------------------------------------
+
+This is an "assignment problem" or "maximum weighted matching" problem (see
+https://en.wikipedia.org/wiki/Assignment_problem).
+
+It is different from the "stable marriage problem" (see
+https://en.wikipedia.org/wiki/Stable_marriage_problem), used for
+hospital/resident matching in the US via the Gale-Shapley algorithm and
+derivatives (https://en.wikipedia.org/wiki/Gale%E2%80%93Shapley_algorithm;
+https://www.nrmp.org/nobel-prize/). The stable marriage problem aims to pair
+couples (person A and B in each couple) such that there is no pairing A1-B1
+where A1 prefers another (B2) over their allocated B1, and B2 *also* prefers A1
+to their own allocated partner. That would be unstable, because A1 and B2 could
+run away together.
+
+"Maximum satisfaction" problems aren't always stable, and vice versa (see e.g.
+Irving et al. 1987, https://doi.org/10.1145/28869.28871, and examples at
+https://en.wikipedia.org/wiki/Stable_marriage_problem#Different_stable_matchings).
+
+A supposedly optimal stable algorithm for student-project allocation is that by
+Abraham, Irving & Manlove (2007, https://doi.org/10.1016/j.jda.2006.03.006), or
+"AIM2007". The "two algorithms" of the title are the one that is
+student-optimal, and the one that is supervisor-optimal. These algorithms are
+implemented in the Python ``matching`` package
+(https://matching.readthedocs.io/). In theory, this also brings extra
+sophistication, such as the ability to set supervisor capacity as well as
+project capacity. However, that implementation can fail completely (e.g. test
+example 4 in the ``testdata`` directory), by failing to allocate some students
+to any project. The example has no specific supervisor preferences, ten
+projects each with capacity for one student, and preferences like this:
+
+.. code-block:: none
+
+        P1	P2	P3	P4	P5	P6	P7	P8	P9	P10
+    S1	1	2	3
+    S2	1	2	3
+    S3				1	2	3
+    S4				1	2	3
+    S5							1	2	3
+    S6							1	2	3
+    S7	2	3								1
+    S8	3								1	2
+    S9								1	2	3
+    S10					1	2	3
+
+The AIM2007 algorithm gave:
+
+.. code-block:: none
+
+    Preferences (re-sorted):
+
+    For student S1, setting preferences: [P1, P2, P3]
+    For student S2, setting preferences: [P1, P2, P3]
+    For student S3, setting preferences: [P4, P5, P6]
+    For student S4, setting preferences: [P4, P5, P6]
+    For student S5, setting preferences: [P7, P8, P9]
+    For student S6, setting preferences: [P7, P8, P9]
+    For student S7, setting preferences: [P10, P1, P2]
+    For student S8, setting preferences: [P9, P10, P1]
+    For student S9, setting preferences: [P8, P9, P10]
+    For student S10, setting preferences: [P5, P6, P7]
+    For supervisor Supervisor of P1, setting preferences: [S2, S8, S1, S7]
+    For supervisor Supervisor of P2, setting preferences: [S2, S1, S7]
+    For supervisor Supervisor of P3, setting preferences: [S2, S1]
+    For supervisor Supervisor of P4, setting preferences: [S3, S4]
+    For supervisor Supervisor of P5, setting preferences: [S3, S4, S10]
+    For supervisor Supervisor of P6, setting preferences: [S3, S4, S10]
+    For supervisor Supervisor of P7, setting preferences: [S5, S6, S10]
+    For supervisor Supervisor of P8, setting preferences: [S5, S6, S9]
+    For supervisor Supervisor of P9, setting preferences: [S8, S5, S6, S9]
+    For supervisor Supervisor of P10, setting preferences: [S8, S9, S7]
+
+    Result:
+
+    st  pr  student's rank
+    S1	P2  2
+    S2	P1  1
+    S3	P4	1
+    S4	P5	2
+    S5	P7  1
+    S6	P8  2
+    S7	--  --  [projects P1, P2, P10 already taken; P3 free but student didn't want it]
+    S8	P9  1
+    S9	P10 3
+    S10	P6  2
+
+The AIM2007 algorithm requires each supervisor to rank *all* those students
+that have ranked *at least one* of their projects
+(https://matching.readthedocs.io/en/latest/discussion/student_allocation/index.html#key-definitions).
+In the absence of a real ranking, we have to give an arbitrary order.
+Nonetheless, in this example, an order was given, across all students who
+picked that project, and the algorithm (or this implementation) failed.
+
+In contrast, dissatisfaction minimization solves this happily, e.g. with
+
+.. code-block:: none
+
+    st  pr  student's rank
+    S1	P1	1
+    S2	P3	3
+    S3	P4	1
+    S4	P5	2
+    S5	P9	3
+    S6	P7	1
+    S7	P2	3
+    S8	P10	2
+    S9	P8	1
+    S10	P6	2
+
+    ... which is also stable, as it happens.
+
+Likewise, with real data (Sep 2020), large numbers of students were unallocated
+by this method.
+
+So: a potential extension for future years is to extend supervisor rankings and
+retry an algorithm such as AIM2007, but it can't (apparently) cope with the
+current situation.
+
+Another possibility is that the algorithm would have worked if students ranked
+more projects. However, that would seem unsatisfactory in the sense that it
+would necessarily involve more dissatisfaction to bring stability.
+
+Another possibility is that this is just a known failure mode of AIM2007. For
+example, Olaosebikan & Manlove (2020,
+https://doi.org/10.1007/s10878-020-00632-x) note that "... exactly the same
+students are unassigned in all stable matchings", and their Algorithm 1 has
+a termination condition of "until every unassigned student has an empty
+preference list" (not that no students are unassigned!).
+
+Since we can't have any student unassigned, and we are now up to Aug 2020 in
+the research literature, I shall stop there and offer dissatisfaction
+minimization as the best practical option that I've come up with, despite the
+fact that it offers some unstable solutions.
+
 
 Changelog
 ---------

@@ -40,12 +40,100 @@ Consistency:
 
 - The new MILP method also seems to be consistent.
 
-"""
+AIM2007 troubles
+----------------
+
+.. code-block:: python
+
+    from matching.games import StudentAllocation
+
+    student_to_preferences = {
+        "S1": ["P1", "P2", "P3"],
+        "S2": ["P1", "P2", "P3"],
+        "S3": ["P4", "P5", "P6"],
+        "S4": ["P4", "P5", "P6"],
+        "S5": ["P7", "P8", "P9"],
+        "S6": ["P7", "P8", "P9"],
+        "S7": ["P10", "P1", "P2"],
+        "S8": ["P9", "P10", "P1"],
+        "S9": ["P8", "P9", "P10"],
+        "S10": ["P5", "P6", "P7"],
+    }
+    supervisor_to_preferences = {
+        "SV1": ["S2", "S8", "S1", "S7"],
+        "SV2": ["S2", "S1", "S7"],
+        "SV3": ["S2", "S1"],
+        "SV4": ["S3", "S4"],
+        "SV5": ["S3", "S4", "S10"],
+        "SV6": ["S3", "S4", "S10"],
+        "SV7": ["S5", "S6", "S10"],
+        "SV8": ["S5", "S6", "S9"],
+        "SV9": ["S8", "S5", "S6", "S9"],
+        "SV10": ["S8", "S9", "S7"],
+    }
+    project_to_supervisor = {
+        "P1": "SV1",
+        "P2": "SV2",
+        "P3": "SV3",
+        "P4": "SV4",
+        "P5": "SV5",
+        "P6": "SV6",
+        "P7": "SV7",
+        "P8": "SV8",
+        "P9": "SV9",
+        "P10": "SV10",
+    }
+    project_to_capacity = {
+        "P1": 1,
+        "P2": 1,
+        "P3": 1,
+        "P4": 1,
+        "P5": 1,
+        "P6": 1,
+        "P7": 1,
+        "P8": 1,
+        "P9": 1,
+        "P10": 1,
+    }
+    supervisor_to_capacity = {
+        "SV1": 1,
+        "SV2": 1,
+        "SV3": 1,
+        "SV4": 1,
+        "SV5": 1,
+        "SV6": 1,
+        "SV7": 1,
+        "SV8": 1,
+        "SV9": 1,
+        "SV10": 1,
+    }
+
+    game = StudentAllocation.create_from_dictionaries(
+        student_to_preferences,
+        supervisor_to_preferences,
+        project_to_supervisor,
+        project_to_capacity,
+        supervisor_to_capacity,
+    )
+
+    matching = game.solve(optimal="student")
+    assert game.check_validity()  # OK
+    assert game.check_stability()  # OK
+
+    # But, what it doesn't tell you:
+
+    print(matching)
+
+    # {P1: [S2], P2: [S1], P3: [], P4: [S3], P5: [S4], P6: [S10], P7: [S5], P8: [S6], P9: [S8], P10: [S9]}
+    # ... i.e. P3 has no student, and S7 has no project.
+
+"""  # noqa
 
 import argparse
 from collections import OrderedDict
 import csv
 import datetime
+from enum import Enum
 import logging
 import operator
 import os
@@ -56,13 +144,24 @@ from typing import (Any, Dict, Generator, List, Optional, Sequence,
                     Tuple, Union)
 
 from cardinal_pythonlib.argparse_func import RawDescriptionArgumentDefaultsHelpFormatter  # noqa
+from cardinal_pythonlib.enumlike import (
+    CaseInsensitiveEnumMeta,
+    keys_descriptions_from_enum,
+)
 from cardinal_pythonlib.logs import main_only_quicksetup_rootlogger
 from cardinal_pythonlib.maths_py import sum_of_integers_in_inclusive_range
 from cardinal_pythonlib.cmdline import cmdline_quote
+from cardinal_pythonlib.reprfunc import auto_repr
 from openpyxl.cell import Cell
 from openpyxl.reader.excel import load_workbook
 from openpyxl.workbook.workbook import Workbook
 from openpyxl.worksheet.worksheet import Worksheet
+from matching.games.student_allocation import (
+    Project as MGProject,
+    Student as MGStudent,
+    StudentAllocation as MGStudentAllocation,
+    Supervisor as MGSupervisor,
+)
 from mip import BINARY, minimize, Model, xsum
 
 log = logging.getLogger(__name__)
@@ -167,6 +266,12 @@ class SheetHeadings(object):
     MAX_NUMBER_OF_STUDENTS = "Max_number_of_students"
 
 
+class OptimizeMethod(Enum, metaclass=CaseInsensitiveEnumMeta):
+    MINIMIZE_DISSATISFACTION = "Minimize weighted dissatisfaction"
+    ABRAHAM_STUDENT = "Abraham-Irving-Manlove 2007 (optimal for students)"
+    ABRAHAM_SUPERVISOR = "Abraham-Irving-Manlove 2007 (optimal for supervisors)"  # noqa
+
+
 # =============================================================================
 # Helper functions
 # =============================================================================
@@ -224,13 +329,13 @@ class Config(object):
             allow_defunct_projects: bool = False,
             allow_student_preference_ties: bool = False,
             allow_supervisor_preference_ties: bool = False,
-            gale_shapley: bool = False,
+            cmd_args: Dict[str, Any] = None,
             max_time_s: float = DEFAULT_MAX_SECONDS,
             missing_eligibility: bool = None,
+            optimize_method: OptimizeMethod = OptimizeMethod.MINIMIZE_DISSATISFACTION,  # noqa
             preference_power: float = DEFAULT_PREFERENCE_POWER,
             student_must_have_choice: bool = False,
-            supervisor_weight: float = DEFAULT_SUPERVISOR_WEIGHT,
-            cmd_args: Dict[str, Any] = None) -> None:
+            supervisor_weight: float = DEFAULT_SUPERVISOR_WEIGHT) -> None:
         """
         Reads a file, autodetecting its format, and returning the
         :class:`Problem`.
@@ -245,15 +350,16 @@ class Config(object):
                 Allow students to express preference ties?
             allow_supervisor_preference_ties:
                 Allow supervisors to express preference ties?
-            gale_shapley:
-                Use the Gale-Shapley algorithm, with students as "proposers",
-                rather than dissatisfaction minimization.
+            cmd_args:
+                Copy of command-line arguments
             max_time_s:
                 Time limit for MIP optimizer (s).
             missing_eligibility:
                 Use ``True`` or ``False`` to treat missing eligibility cells
                 as meaning "eligible" or "ineligible", respectively, or
                 ``None`` to treat blank cells as invalid.
+            optimize_method:
+                Method to use for optimizing.
             preference_power:
                 Power (exponent) to raise preferences to.
             student_must_have_choice:
@@ -262,21 +368,18 @@ class Config(object):
             supervisor_weight:
                 Weight allocated to supervisor preferences; range [0, 1].
                 (Student preferences are weighted as 1 minus this.)
-
-            cmd_args:
-                Copy of command-line arguments
         """
         self.filename = filename
 
         self.allow_defunct_projects = allow_defunct_projects
         self.allow_student_preference_ties = allow_student_preference_ties
         self.allow_supervisor_preference_ties = allow_supervisor_preference_ties  # noqa
-        self.gale_shapley = gale_shapley
+        self.max_time_s = max_time_s
         self.missing_eligibility = missing_eligibility
+        self.optimize_method = optimize_method
         self.preference_power = preference_power
         self.student_must_have_choice = student_must_have_choice
         self.supervisor_weight = supervisor_weight
-        self.max_time_s = max_time_s
 
         self.cmd_args = cmd_args
 
@@ -348,6 +451,11 @@ class Preferences(object):
             f"Preferences({parts}; "
             f"unranked options score {self._unranked_item_dissatisfaction})"
         )
+
+    def __repr__(self) -> str:
+        return "{" + ", ".join(
+            f"{str(k)}: {str(v)}" for k, v in self._preferences.items()
+        ) + "}"
 
     def set_n_options(self, n_options: int) -> None:
         """
@@ -486,6 +594,29 @@ class Preferences(object):
         """
         return item in self._preferences
 
+    def items_explicitly_ranked(self) -> List[Any]:
+        """
+        All the items for which there is an explicit preference.
+        """
+        return list(self._preferences.keys())
+
+    def items_descending_order(
+            self, all_items: List[Any]) -> List[Any]:
+        """
+        Returns all the items provided, in descending preference order (or the
+        order provided, as a tie-break).
+        """
+        options = []  # type: List[Tuple[Any, float, int]]
+        for i, item in enumerate(all_items):
+            preference = self.preference(item)
+            options.append((item, preference, i))
+        return [
+            t[0]  # the item
+            for t in sorted(options, key=operator.itemgetter(1, 2))
+        ]
+        # ... sort by ascending dissatisfaction score (= descending
+        # preference), then ascending sequence order
+
 
 # =============================================================================
 # Student
@@ -534,6 +665,9 @@ class Student(object):
         """
         return f"{self.name} (S#{self.number})"
 
+    def __repr__(self) -> str:
+        return auto_repr(self)
+
     def description(self) -> str:
         """
         Verbose description.
@@ -570,6 +704,13 @@ class Student(object):
         Did the student explicitly rank this project?
         """
         return self.preferences.actively_expressed_preference(project)
+
+    def projects_in_descending_order(
+            self, all_projects: List["Project"]) -> List["Project"]:
+        """
+        Returns projects in descending order of preference.
+        """
+        return self.preferences.items_descending_order(all_projects)
 
 
 # =============================================================================
@@ -612,6 +753,9 @@ class Project(object):
         String representation.
         """
         return f"{self.name} (P#{self.number})"
+
+    def __repr__(self) -> str:
+        return auto_repr(self)
 
     def __lt__(self, other: "Project") -> bool:
         """
@@ -659,6 +803,13 @@ class Project(object):
         """
         return self.supervisor_preferences.exponentiated_preference(project)
 
+    def students_in_descending_order(
+            self, all_students: List[Student]) -> List[Student]:
+        """
+        Returns students in descending order of preference.
+        """
+        return self.supervisor_preferences.items_descending_order(all_students)
+
 
 # =============================================================================
 # Solution
@@ -670,8 +821,7 @@ class Solution(object):
     """
     def __init__(self,
                  problem: "Problem",
-                 allocation: Dict[Student, Project],
-                 supervisor_weight: float) -> None:
+                 allocation: Dict[Student, Project]) -> None:
         """
         Args:
             problem:
@@ -681,7 +831,6 @@ class Solution(object):
         """
         self.problem = problem
         self.allocation = allocation
-        self.supervisor_weight = supervisor_weight
 
     # -------------------------------------------------------------------------
     # Representations
@@ -699,19 +848,6 @@ class Solution(object):
                 f"{student.shortname()} -> {project} "
                 f"(student dissatisfaction {std}; "
                 f"supervisor dissatisfaction {svd})")
-        lines.append("")
-        lines.append(
-            f"Student dissatisfaction mean: "
-            f"{self.student_dissatisfaction_mean()}")
-        lines.append(
-            f"Student dissatisfaction variance: "
-            f"{self.student_dissatisfaction_variance()}")
-        lines.append(
-            f"Supervisor dissatisfaction (with each student) mean: "
-            f"{self.supervisor_dissatisfaction_mean()}")
-        lines.append(
-            f"Supervisor dissatisfaction (with each student) variance: "
-            f"{self.supervisor_dissatisfaction_variance()}")
         return "\n".join(lines)
 
     def shortdesc(self) -> str:
@@ -727,8 +863,26 @@ class Solution(object):
         )
 
     # -------------------------------------------------------------------------
-    # Internals
+    # Allocations
     # -------------------------------------------------------------------------
+
+    def allocated_project(self, student: Student) -> Project:
+        """
+        Which project was allocated to this student?
+        """
+        return self.allocation[student]
+
+    def allocated_students(self, project: Project) -> List[Student]:
+        """
+        Which students were allocated to this project?
+        """
+        return sorted(k for k, v in self.allocation.items() if v == project)
+
+    def is_allocated(self, student: Student, project: Project) -> bool:
+        """
+        Is this student allocated to this project?
+        """
+        return self.allocation[student] == project
 
     def _gen_student_project_pairs(self) -> Generator[Tuple[Student, Project],
                                                       None, None]:
@@ -846,14 +1000,74 @@ class Solution(object):
         return max(self.supervisor_dissatisfaction_scores_each_student())
 
     # -------------------------------------------------------------------------
-    # Allocations
+    # Stability test
     # -------------------------------------------------------------------------
 
-    def allocated_students(self, project: Project) -> List[Student]:
+    def gen_better_projects(
+            self,
+            student: Student,
+            project: Project) -> Generator[Project, None, None]:
         """
-        Which students were allocated to this project?
+        Generates projects that this student prefers over the specified one.
         """
-        return sorted(k for k, v in self.allocation.items() if v == project)
+        current_dissatisfaction = student.dissatisfaction(project)
+        for p in self.problem.projects:
+            new_dissatisfaction = student.dissatisfaction(p)
+            if new_dissatisfaction < current_dissatisfaction:
+                yield p
+
+    def gen_better_students(
+            self,
+            project: Project,
+            student: Student) -> Generator[Student, None, None]:
+        """
+        Generates students that this project prefers over the specified one,
+        AND who are are not already allocated to that project (bearing in mind
+        that a project can have several students).
+        """
+        current_dissatisfaction = project.dissatisfaction(student)
+        for s in self.problem.students:
+            new_dissatisfaction = project.dissatisfaction(s)
+            if new_dissatisfaction < current_dissatisfaction:
+                if not self.is_allocated(s, project):
+                    yield s
+
+    def is_stable(self, all_failures: bool = True) -> Tuple[bool, str]:
+        """
+        Is the solution a stable match? See README.rst for discussion.
+        See also https://gist.github.com/joyrexus/9967709.
+
+        Arguments:
+            all_failures:
+                Show all reasons for failure.
+
+        Returns:
+            tuple: (stable, reason_for_instability)
+        """
+        stable = True
+        instability_reasons = []  # type: List[str]
+        for student, project in self._gen_student_project_pairs():
+            for alt_project in self.gen_better_projects(student, project):
+                for alt_proj_student in self.allocated_students(alt_project):
+                    if alt_proj_student == student:
+                        continue
+                    if student in self.gen_better_students(alt_project,
+                                                           alt_proj_student):
+                        instability_reasons.append(
+                            f"Pairing of student {student} to project "
+                            f"{project} is unstable. "
+                            f"The student would rather have alternative "
+                            f"project {alt_project}, and that alternative "
+                            f"project would rather have {student} than their "
+                            f"current allocation of {alt_proj_student}."
+                        )
+                        stable = False
+                        if not all_failures:
+                            return False, "\n\n".join(instability_reasons)
+        if stable:
+            return True, "[Stable]"
+        else:
+            return False, "\n\n".join(instability_reasons)
 
     # -------------------------------------------------------------------------
     # Saving
@@ -971,6 +1185,7 @@ class Solution(object):
         # Software, settings, and summary information
         # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         zs = wb.create_sheet(SheetNames.INFORMATION)
+        is_stable, instability_reason = self.is_stable()
         zs_rows = [
             ["SOFTWARE DETAILS"],
             [],
@@ -985,9 +1200,9 @@ class Solution(object):
             [],
             ["Date/time", datetime.datetime.now()],
             ["Overall weight given to student preferences",
-             1 - self.supervisor_weight],
+             1 - self.problem.config.supervisor_weight],
             ["Overall weight given to supervisor preferences",
-             self.supervisor_weight],
+             self.problem.config.supervisor_weight],
             ["Command-line parameters", cmdline_quote(sys.argv)],
             ["Config", str(self.problem.config)],
             [],
@@ -1014,6 +1229,9 @@ class Solution(object):
              self.supervisor_dissatisfaction_min()],
             ["Supervisor dissatisfaction (with each student) maximum",
              self.supervisor_dissatisfaction_max()],
+            [],
+            ["Stable marriages?", str(is_stable)],
+            ["If unstable, reason:", instability_reason]
         ]
         for row in zs_rows:
             zs.append(row)
@@ -1260,6 +1478,16 @@ class Problem(object):
         Number of projects.
         """
         return len(self.projects)
+
+    def students_who_chose(self, project: Project) -> List[Student]:
+        """
+        All students who ranked this project in some way.
+        """
+        return [
+            s
+            for s in self.students
+            if s.preferences.actively_expressed_preference(project)
+        ]
 
     # -------------------------------------------------------------------------
     # Read data
@@ -1600,35 +1828,6 @@ class Problem(object):
             )
 
     # -------------------------------------------------------------------------
-    # Internals for solvers
-    # -------------------------------------------------------------------------
-
-    def _make_solution(self,
-                       project_indexes: Sequence[int],
-                       supervisor_weight: float,
-                       validate: bool = True) -> Solution:
-        """
-        Creates a solution from project index numbers.
-
-        Args:
-            project_indexes:
-                Indexes (zero-based) of project numbers, one per student,
-                in the order of ``self.students``.
-            validate:
-                validate input? For debugging only.
-        """
-        if validate:
-            n_students = len(self.students)
-            assert len(project_indexes) == n_students, (
-                "Number of project indices does not match number of students"
-            )
-        allocation = {}  # type: Dict[Student, Project]
-        for student_idx, project_idx in enumerate(project_indexes):
-            allocation[self.students[student_idx]] = self.projects[project_idx]
-        return Solution(problem=self, allocation=allocation,
-                        supervisor_weight=supervisor_weight)
-
-    # -------------------------------------------------------------------------
     # Solver entry point
     # -------------------------------------------------------------------------
 
@@ -1636,10 +1835,15 @@ class Problem(object):
         """
         Return the best solution.
         """
-        if self.config.gale_shapley:
-            return self.best_solution_gale_shapley()
-        else:
+        method = self.config.optimize_method
+        if method == OptimizeMethod.MINIMIZE_DISSATISFACTION:
             return self.best_solution_mip()
+        elif method == OptimizeMethod.ABRAHAM_STUDENT:
+            return self.best_solution_abraham(optimal="student")
+        elif method == OptimizeMethod.ABRAHAM_SUPERVISOR:
+            return self.best_solution_abraham(optimal="supervisor")
+        else:
+            raise AssertionError(f"Unknown optimization method: {method!r}")
 
     # -------------------------------------------------------------------------
     # Solve via MIP
@@ -1745,8 +1949,7 @@ class Problem(object):
             # If those two expressions are not the same, there's a bug.
             for s in range(n_students)
         ]
-        return self._make_solution(project_indexes,
-                                   supervisor_weight=supervisor_weight)
+        return self._make_solution(project_indexes)
 
     @staticmethod
     def _debug_model_vars(m: Model) -> None:
@@ -1758,21 +1961,177 @@ class Problem(object):
             lines.append(f"{v.name} == {v.x}")
         log.debug("\n".join(lines))
 
-    # -------------------------------------------------------------------------
-    # Solve via Gale-Shapley
-    # -------------------------------------------------------------------------
-
-    def best_solution_gale_shapley(self) -> Optional[Solution]:
+    def _make_solution(self,
+                       project_indexes: Sequence[int],
+                       validate: bool = True) -> Solution:
         """
-        Optimize via the Gale-Shapley algorithm, with students as "proposers"
-        (to give them the advantage).
+        Creates a solution from project index numbers.
 
-        See
+        Args:
+            project_indexes:
+                Indexes (zero-based) of project numbers, one per student,
+                in the order of ``self.students``.
+            validate:
+                validate input? For debugging only.
+        """
+        if validate:
+            n_students = len(self.students)
+            assert len(project_indexes) == n_students, (
+                "Number of project indices does not match number of students"
+            )
+        allocation = {}  # type: Dict[Student, Project]
+        for student_idx, project_idx in enumerate(project_indexes):
+            allocation[self.students[student_idx]] = self.projects[project_idx]
+        return Solution(problem=self, allocation=allocation)
+
+    # -------------------------------------------------------------------------
+    # Solve via Abraham-Irving-Manlove 2007
+    # -------------------------------------------------------------------------
+
+    def best_solution_abraham(self,
+                              optimal: str = "student") -> Optional[Solution]:
+        """
+        Optimize via the Abraham-Irving-Manlove 2007 algorithm, optimally for
+        students.
+
+        For the Gale-Shapley algorithm, see
 
         - https://en.wikipedia.org/wiki/Gale%E2%80%93Shapley_algorithm
         - https://www.nrmp.org/nobel-prize/
-        """
-        raise NotImplementedError
+
+        Others' work on Gale-Shapley:
+
+        - https://towardsdatascience.com/gale-shapley-algorithm-simply-explained-caa344e643c2
+        - https://gist.github.com/joyrexus/9967709 (a good one)
+        - https://github.com/Vishal-Kancharla/Gale-Shapley-Algorithm
+        - https://rosettacode.org/wiki/Stable_marriage_problem
+
+        For Abraham-Irving-Manlove:
+
+        - https://matching.readthedocs.io/
+        """  # noqa
+        assert optimal in ["student", "supervisor"]
+
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        # Set up the problem: (1) create objects
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+        mg_students = []  # type: List[MGStudent]
+        student_to_mg_student = {}  # type: Dict[Student, MGStudent]
+        mg_student_to_student = {}  # type: Dict[MGStudent, Student]
+        for s in self.students:
+            mg_student = MGStudent(name=s.name)
+            mg_students.append(mg_student)
+            student_to_mg_student[s] = mg_student
+            mg_student_to_student[mg_student] = s
+
+        mg_supervisors = []  # type: List[MGSupervisor]
+        mg_projects = []  # type: List[MGProject]
+        project_to_mg_supervisor = {}  # type: Dict[Project, MGSupervisor]
+        mg_supervisor_to_project = {}  # type: Dict[MGSupervisor, Project]
+        project_to_mg_project = {}  # type: Dict[Project, MGProject]
+        mg_project_to_project = {}  # type: Dict[MGProject, Project]
+        for p in self.projects:
+            mg_supervisor = MGSupervisor(
+                name=f"Supervisor of {p.name}",
+                capacity=p.max_n_students
+            )
+            mg_supervisors.append(mg_supervisor)
+            project_to_mg_supervisor[p] = mg_supervisor
+            mg_supervisor_to_project[mg_supervisor] = p
+
+            mg_project = MGProject(
+                name=p.name,
+                capacity=p.max_n_students
+            )
+            mg_project.set_supervisor(mg_supervisor)
+            mg_projects.append(mg_project)
+            project_to_mg_project[p] = mg_project
+            mg_project_to_project[mg_project] = p
+
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        # Set up the problem: (2) define preferences
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+        # Student preferences. Must set these first.
+        for s in self.students:
+            mg_student = student_to_mg_student[s]
+            preferred_projects = [
+                project_to_mg_project[p]
+                for p in s.projects_in_descending_order([
+                    # Only the projects that the student has ranked
+                    # explicitly...
+                    px
+                    for px in s.preferences.items_explicitly_ranked()
+                    # ... and that the student is eligible for.
+                    if self.eligibility.is_eligible(s, px)
+                ])
+            ]
+            log.debug(f"For student {mg_student}, "
+                      f"setting preferences: {preferred_projects}")
+            mg_student.set_prefs(preferred_projects)
+
+        # Supervisor/project preferences. (These are assigned to supervisors.)
+        for p in self.projects:
+            mg_supervisor = project_to_mg_supervisor[p]
+            preferred_students = [
+                student_to_mg_student[s]
+                for s in p.students_in_descending_order([
+                    # Only the students that explicitly chose this project...
+                    sx
+                    for sx in self.students_who_chose(p)
+                    # ... and are eligible for it:
+                    if self.eligibility.is_eligible(sx, p)
+                ])
+            ]
+            log.debug(f"For supervisor {mg_supervisor}, "
+                      f"setting preferences: {preferred_students}")
+            mg_supervisor.set_prefs(preferred_students)
+
+        # log.critical(f"Supervisors: {mg_supervisors}")
+        # log.critical(f"Projects: {mg_projects}")
+        # log.critical(f"Students: {mg_students}")
+
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        # Solve
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        game = MGStudentAllocation(
+            mg_students, mg_projects, mg_supervisors)
+        matching = game.solve(optimal=optimal)
+        if matching is None:  # no solution found
+            return None
+        assert game.check_validity()
+        assert game.check_stability()
+        # log.critical(repr(matching))
+
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        # Translate back to our Solution class
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        allocation = {}  # type: Dict[Student, Project]
+        for mg_project_copy, mg_student_copies in matching.items():
+            # We cannot do a lookup. It has done a deepcopy. We have to match
+            # by name.
+            mg_project = next(mgp for mgp in mg_projects
+                              if mgp.name == mg_project_copy.name)
+            project = mg_project_to_project[mg_project]
+            for mg_student_copy in mg_student_copies:
+                # Ditto... this is a bit silly...
+                mg_student = next(mgs for mgs in mg_students
+                                  if mgs.name == mg_student_copy.name)
+                student = mg_student_to_student[mg_student]
+                allocation[student] = project
+        # Create the solution
+        solution = Solution(problem=self, allocation=allocation)
+        # Sanity-check the solution
+        unallocated_students = [
+            s for s in self.students if s not in allocation
+        ]
+        if unallocated_students:
+            log.critical(solution)
+            log.critical(f"Failed: unallocated students: "
+                         f"{unallocated_students}")
+            return None
+        return solution
 
 
 # =============================================================================
@@ -1912,10 +2271,12 @@ first row is the title row):
              "tempts the operator to re-run with different seeds). "
              "FOR DEBUGGING USE ONLY."
     )
+    method_k, method_desc = keys_descriptions_from_enum(
+        OptimizeMethod, keys_to_lower=True)
     method_group.add_argument(
-        "--gs", action="store_true",
-        help="Use the Gale-Shapley algorithm, with students as 'proposers', "
-             "instead of dissatisfaction minimization. EXPERIMENTAL"
+        "--method", type=str, choices=method_k,
+        default=OptimizeMethod.MINIMIZE_DISSATISFACTION.name,
+        help=f"Method of solving. -- {method_desc} --"
     )
 
     args = parser.parse_args()
@@ -1933,18 +2294,19 @@ first row is the title row):
 
     # Go
     config = Config(
-        filename=args.filename,
         allow_defunct_projects=args.allow_defunct_projects,
         allow_student_preference_ties=args.allow_student_preference_ties,
         allow_supervisor_preference_ties=args.allow_supervisor_preference_ties,
+        cmd_args=vars(args),
+        filename=args.filename,
+        max_time_s=args.maxtime,
         missing_eligibility=args.missing_eligibility,
+        optimize_method=OptimizeMethod[args.method],
         preference_power=args.preference_power,
         student_must_have_choice=args.student_must_have_choice,
-        cmd_args=vars(args),
-        gale_shapley=args.gs,
         supervisor_weight=args.supervisor_weight,
-        max_time_s=args.maxtime,
     )
+    log.info(f"Command: {cmdline_quote(sys.argv)}")
     log.info(f"Config: {config}")
     problem = Problem.read_data(config)
     if args.output:
