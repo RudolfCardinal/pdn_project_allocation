@@ -390,6 +390,4 @@ Changelog
   - ``--seed`` option (for debugging ONLY; not fair for real use as it
     encourages fishing for the "right" result from the operator's perspective).
   - Improved README.
-  - ``--gs`` option for the Gale-Shapley algorithm, with students as "proposer"
-    (https://en.wikipedia.org/wiki/Gale%E2%80%93Shapley_algorithm; see also
-    https://www.nrmp.org/nobel-prize/).
+  - Options to use the AIM2007 algorithms, as above.
