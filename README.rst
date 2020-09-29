@@ -185,13 +185,18 @@ sometimes help, if competition is fierce for projects.
   (exponent). For example, an exponent of 2 would map dissatisfaction scores of
   {1, 2, 3, ...} to {1, 4, 9, ...} for the optimization step.
 
-**Disadvantages**
+**Happiest on average, or stable?**
 
-- The solution is not always *stable* (the technical meaning of stability is
-  given below). However, at present, a supposedly optimal "stable" algorithm
-  does not provide projects for all the students with our Sep 2020 real-world
-  data (see below), so that's are not much use. The software will report and
-  explain any instability.
+- The basic solution is not always *stable* (the technical meaning of stability
+  is given below). A supposedly optimal "stable" algorithm did not provide
+  projects for all the students with our Sep 2020 real-world data (see below),
+  so that wasn't much use. In response to this, firstly the software will
+  report and explain any instability. Secondly, moreover, a new (?) algorithm
+  is developed to produce stable solutions despite non-strict preferences, and
+  this is now an option. It's possible to say "stable if you can, optimal if
+  you can't". There can still be a **tradeoff between average "happiness" and
+  stability,** which is up to the course administrator to decide on.
+  (Instability may produce more complaints!)
 
 
 Methodological considerations ("why not use the Nobel Prize-winning method?")
@@ -326,9 +331,8 @@ preference list" (not that no students are unassigned!).
 
 We can go one step further, and enforce stability via integer linear
 programming, as per Abeledo & Blum (1996,
-https://doi.org/10.1016/0024-3795(95)00052-6 ). The outcome, perhaps
-predictable, was that real-world situations do not always allow stable
-solutions in which every student was allocated.
+https://doi.org/10.1016/0024-3795(95)00052-6 ). However, the algorithm assumes
+strict ordering (e.g. that each supervisor strictly ranks all
 
 Since we can't have any student unassigned, and we are now up to Aug 2020 in
 the research literature, I shall stop there and offer "dissatisfaction
@@ -391,7 +395,7 @@ Changelog
   - Tested with real data.
   - Speed up spreadsheet reading; student CSV output (e.g. for Meld_).
 
-- 2020-09-28, v1.1.1:
+- 2020-09-28 to 2020-09-29, v1.1.1:
 
   - Shows median/min/max in summary statistics.
   - ``--seed`` option (for debugging ONLY; not fair for real use as it
@@ -400,3 +404,11 @@ Changelog
   - Options to use the AIM2007 algorithms, as above.
   - Options to enforce stability via the MIP approach, and to try that but fall
     back to the overall "least dissatisfaction" approach (now the default).
+  - New algorithm to produce a stable solution (and within that, the best
+    stable solution) even despite non-strict preference orderings.
+
+
+To do
+-----
+
+- Implement separate "supervisor capacity" as well as "project capacity".
