@@ -272,8 +272,8 @@ The AIM2007 algorithm gave:
     st  pr  student's rank
     S1	P2  2
     S2	P1  1
-    S3	P4	1
-    S4	P5	2
+    S3	P4  1
+    S4	P5  2
     S5	P7  1
     S6	P8  2
     S7	--  --  [projects P1, P2, P10 already taken; P3 free but student didn't want it]
@@ -293,16 +293,16 @@ In contrast, dissatisfaction minimization solves this happily, e.g. with
 .. code-block:: none
 
     st  pr  student's rank
-    S1	P1	1
-    S2	P3	3
-    S3	P4	1
-    S4	P5	2
-    S5	P9	3
-    S6	P7	1
-    S7	P2	3
-    S8	P10	2
-    S9	P8	1
-    S10	P6	2
+    S1	P1  1
+    S2	P3  3
+    S3	P4  1
+    S4	P5  2
+    S5	P9  3
+    S6	P7  1
+    S7	P2  3
+    S8	P10 2
+    S9	P8  1
+    S10	P6  2
 
     ... which is also stable, as it happens.
 
