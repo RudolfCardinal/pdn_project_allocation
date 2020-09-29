@@ -32,6 +32,7 @@ def process(infile: str, outfile: str,
         "--verbose",
 
         # "--method", "minimize_dissatisfaction_stable",
+        # "--method", "minimize_dissatisfaction_stable_custom",
         "--method", "minimize_dissatisfaction_stable_fallback",
         # "--method", "abraham_student",
 

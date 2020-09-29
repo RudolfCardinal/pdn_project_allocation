@@ -141,7 +141,7 @@ import random
 from statistics import mean, median, variance
 import sys
 import traceback
-from typing import (Any, Dict, Generator, List, Optional, Sequence,
+from typing import (Any, Dict, Generator, List, Optional, Sequence, Set,
                     Tuple, Union)
 
 from cardinal_pythonlib.argparse_func import RawDescriptionArgumentDefaultsHelpFormatter  # noqa
@@ -163,7 +163,7 @@ from matching.games.student_allocation import (
     StudentAllocation as MGStudentAllocation,
     Supervisor as MGSupervisor,
 )
-from mip import BINARY, minimize, Model, Var, xsum
+from mip import BINARY, LinExpr, minimize, Model, Var, xsum
 
 log = logging.getLogger(__name__)
 
@@ -172,7 +172,7 @@ VERSION_DATE = "2020-09-27"
 
 ALMOST_ONE = 0.99
 DEFAULT_PREFERENCE_POWER = 1.0
-DEFAULT_MAX_SECONDS = 60
+DEFAULT_MAX_SECONDS = 1e100  # the default in mip
 DEFAULT_SUPERVISOR_WEIGHT = 0.3  # 70% student, 30% supervisor by default
 RNG_SEED = 1234  # fixed
 VERY_VERBOSE = False  # debugging option
@@ -269,12 +269,22 @@ class SheetHeadings(object):
 
 class OptimizeMethod(Enum, metaclass=CaseInsensitiveEnumMeta):
     MINIMIZE_DISSATISFACTION = "Minimize weighted dissatisfaction"
+    MINIMIZE_DISSATISFACTION_STABLE_AB1996 = (
+        "Minimize weighted dissatisfaction, requiring stability, "
+        "via Abeledo & Blum (1996) method"
+    )
+    MINIMIZE_DISSATISFACTION_STABLE_CUSTOM = (
+        "Minimize weighted dissatisfaction, requiring stability, "
+        "via custom method that does not assume strict preferences"
+    )
     MINIMIZE_DISSATISFACTION_STABLE = (
-        "Minimize weighted dissatisfaction, requiring stability"
+        "Minimize weighted dissatisfaction, requiring stability, "
+        "via Abeledo & Blum (1996) falling back to custom method if required"
     )
     MINIMIZE_DISSATISFACTION_STABLE_FALLBACK = (
-        "Minimize weighted dissatisfaction, requiring stable if possible, "
-        "but falling back to unstable if not"
+        "Minimize weighted dissatisfaction, requiring stability if possible"
+        "(as for MINIMIZE_DISSATISFACTION_STABLE), but falling back to "
+        "unstable if not."
     )
     ABRAHAM_STUDENT = "Abraham-Irving-Manlove 2007 (optimal for students)"
     ABRAHAM_SUPERVISOR = (
@@ -601,7 +611,7 @@ class Preferences(object):
         """
         return self._preferences.get(item)  # returns None if absent
 
-    def actively_expressed_preference(self, item: Any) -> bool:
+    def actively_expressed_preference_for(self, item: Any) -> bool:
         """
         Did the person actively express a preference for this item?
         """
@@ -629,6 +639,22 @@ class Preferences(object):
         ]
         # ... sort by ascending dissatisfaction score (= descending
         # preference), then ascending sequence order
+
+    def is_strict_over(self, items: List[Any]) -> bool:
+        """
+        Are all preferences strictly ordered for the items in question?
+        """
+        prefs = [self.preference(item) for item in items]
+        n_preferences = len(prefs)
+        n_unique_prefs = len(set(prefs))
+        return n_preferences == n_unique_prefs
+
+    def is_strict_over_expressed_preferences(self) -> bool:
+        """
+        Are preferences strictly ordered for the items for which a preference
+        has been expressed?
+        """
+        return self.is_strict_over(self.items_explicitly_ranked())
 
 
 # =============================================================================
@@ -716,7 +742,7 @@ class Student(object):
         """
         Did the student explicitly rank this project?
         """
-        return self.preferences.actively_expressed_preference(project)
+        return self.preferences.actively_expressed_preference_for(project)
 
     def projects_in_descending_order(
             self, all_projects: List["Project"]) -> List["Project"]:
@@ -1023,11 +1049,8 @@ class Solution(object):
         """
         Generates projects that this student prefers over the specified one.
         """
-        current_dissatisfaction = student.dissatisfaction(project)
-        for p in self.problem.projects:
-            new_dissatisfaction = student.dissatisfaction(p)
-            if new_dissatisfaction < current_dissatisfaction:
-                yield p
+        for p in self.problem.gen_better_projects(student, project):
+            yield p
 
     def gen_better_students(
             self,
@@ -1035,15 +1058,13 @@ class Solution(object):
             student: Student) -> Generator[Student, None, None]:
         """
         Generates students that this project prefers over the specified one,
-        AND who are are not already allocated to that project (bearing in mind
-        that a project can have several students).
+        for which they're eligible, AND who are are not already allocated to
+        that project (bearing in mind that a project can have several
+        students).
         """
-        current_dissatisfaction = project.dissatisfaction(student)
-        for s in self.problem.students:
-            new_dissatisfaction = project.dissatisfaction(s)
-            if new_dissatisfaction < current_dissatisfaction:
-                if not self.is_allocated(s, project):
-                    yield s
+        for s in self.problem.gen_better_students(project, student):
+            if not self.is_allocated(s, project):
+                yield s
 
     def stability(self, describe_all_failures: bool = True) -> Tuple[bool, str]:
         """
@@ -1185,8 +1206,10 @@ class Solution(object):
             )
             student_prefs = {}  # type: Dict[Student, float]
             for student in self.problem.students:
-                if student.preferences.actively_expressed_preference(project):
-                    student_prefs[student] = student.preferences.preference(project)  # noqa
+                if student.preferences.actively_expressed_preference_for(
+                        project):
+                    student_prefs[student] = student.preferences.preference(
+                        project)
             student_details = []  # type: List[str]
             for student, studpref in sorted(student_prefs.items(),
                                             key=operator.itemgetter(1, 0)):
@@ -1505,8 +1528,90 @@ class Problem(object):
         return [
             s
             for s in self.students
-            if s.preferences.actively_expressed_preference(project)
+            if s.preferences.actively_expressed_preference_for(project)
         ]
+
+    def gen_student_project_pairs_where_student_chose_project(self) \
+            -> Generator[Tuple[Student, Project], None, None]:
+        """
+        Generate ``student, project`` tuples where the student expressed some
+        interest in the project.
+        """
+        for s in self.students:
+            for p in s.preferences.items_explicitly_ranked():
+                yield s, p
+
+    def is_student_interested(self,
+                              student: Student,
+                              project: Project) -> bool:
+        """
+        Is the student interested in this project?
+        """
+        return self.students[student].actively_expressed_preference_for(project)  # noqa
+
+    def are_preferences_strict_over_relevant_combos(self) -> bool:
+        """
+        Are all preferences strict, across combinations that matter?
+        """
+        # Students should strictly order their projects:
+        for s in self.students:
+            if not s.preferences.is_strict_over_expressed_preferences():
+                return False
+        # Supervisors should strictly order the students who expressed an
+        # interest in their projects:
+        for p in self.projects:
+            students = self.students_who_chose(p)
+            if not p.supervisor_preferences.is_strict_over(students):
+                return False
+        return True
+
+    def gen_better_projects(
+            self,
+            student: Student,
+            project: Project) -> Generator[Project, None, None]:
+        """
+        Generates projects that this student prefers over the specified one
+        (and for which they're eligible).
+        """
+        current_dissatisfaction = student.dissatisfaction(project)
+        for p in self.projects:
+            if not self.eligibility.is_eligible(student, p):
+                continue
+            new_dissatisfaction = student.dissatisfaction(p)
+            if new_dissatisfaction < current_dissatisfaction:
+                yield p
+
+    def gen_better_students(
+            self,
+            project: Project,
+            student: Student) -> Generator[Student, None, None]:
+        """
+        Generates students that this project prefers over the specified one
+        (and for which they're eligible).
+        """
+        current_dissatisfaction = project.dissatisfaction(student)
+        for s in self.students:
+            if not self.eligibility.is_eligible(s, project):
+                continue
+            new_dissatisfaction = project.dissatisfaction(s)
+            if new_dissatisfaction < current_dissatisfaction:
+                yield s
+
+    def gen_worse_students(
+            self,
+            project: Project,
+            student: Student) -> Generator[Student, None, None]:
+        """
+        Generates students that this project prefers LESS THAN the specified
+        one (and for which they're eligible).
+        """
+        current_dissatisfaction = project.dissatisfaction(student)
+        for s in self.students:
+            if not self.eligibility.is_eligible(s, project):
+                continue
+            new_dissatisfaction = project.dissatisfaction(s)
+            if new_dissatisfaction > current_dissatisfaction:
+                yield s
 
     # -------------------------------------------------------------------------
     # Read data
@@ -1857,16 +1962,31 @@ class Problem(object):
         method = self.config.optimize_method
         if method == OptimizeMethod.MINIMIZE_DISSATISFACTION:
             return self.best_solution_mip(enforce_stability=False)
+        elif method == OptimizeMethod.MINIMIZE_DISSATISFACTION_STABLE_AB1996:
+            return self.best_solution_mip(
+                enforce_stability=True, stability_ab1996=True)
+        elif method == OptimizeMethod.MINIMIZE_DISSATISFACTION_STABLE_CUSTOM:
+            return self.best_solution_mip(
+                enforce_stability=True, stability_ab1996=False)
         elif method == OptimizeMethod.MINIMIZE_DISSATISFACTION_STABLE:
-            return self.best_solution_mip(enforce_stability=True)
+            return (
+                self.best_solution_mip(
+                    enforce_stability=True, stability_ab1996=True) or
+                self.best_solution_mip(
+                    enforce_stability=True, stability_ab1996=False)
+            )
         elif method == OptimizeMethod.MINIMIZE_DISSATISFACTION_STABLE_FALLBACK:
-            solution = self.best_solution_mip(enforce_stability=True)
+            solution = (
+                self.best_solution_mip(
+                    enforce_stability=True, stability_ab1996=True) or
+                self.best_solution_mip(
+                    enforce_stability=True, stability_ab1996=False)
+            )
             if solution:
                 return solution
-            else:
-                log.warning("Stable solution not found. Falling back to "
-                            "overall best.")
-                return self.best_solution_mip(enforce_stability=False)
+            log.warning("Stable solution not found. Falling back to "
+                        "overall best (permitting instability).")
+            return self.best_solution_mip(enforce_stability=False)
         elif method == OptimizeMethod.ABRAHAM_STUDENT:
             return self.best_solution_abraham(optimal="student")
         elif method == OptimizeMethod.ABRAHAM_SUPERVISOR:
@@ -1880,7 +2000,8 @@ class Problem(object):
 
     def best_solution_mip(
             self,
-            enforce_stability: bool = False) -> Optional[Solution]:
+            enforce_stability: bool = False,
+            stability_ab1996: bool = False) -> Optional[Solution]:
         """
         Return the best solution by optimizing with the MIP package.
         This is extremely impressive.
@@ -1889,10 +2010,14 @@ class Problem(object):
         Args:
             enforce_stability:
                 Ensure only stable "marriages" are produced (or fail entirely)?
-                Uses the stability constraint that is equation 4 of
-                Abeledo & Blum (1996,
+            stability_ab1996:
+                For ``enforce_stability``: use the stability constraint that is
+                equation 4 of Abeledo & Blum (1996,
                 https://doi.org/10.1016/0024-3795(95)00052-6).
         """
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        # Basic setup
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         def varname(s_: int, p_: int) -> str:
             """
             Makes it easier to create/retrieve model variables.
@@ -1901,17 +2026,19 @@ class Problem(object):
             return f"x[{s_},{p_}]"
 
         supervisor_weight = self.config.supervisor_weight
-
         assert 0 <= supervisor_weight <= 1
         student_weight = 1 - supervisor_weight
         log.info(
             f"MIP approach: student_weight={student_weight}, "
             f"supervisor_weight={supervisor_weight}, "
-            f"enforce_stability={enforce_stability}")
+            f"enforce_stability={enforce_stability}, "
+            f"stability_ab1996={stability_ab1996}")
         n_students = len(self.students)
         n_projects = len(self.projects)
 
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         # Eligibility map
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         eligible = [
             [
                 self.eligibility.is_eligible(student, project)
@@ -1920,7 +2047,9 @@ class Problem(object):
             for s, student in enumerate(self.students)  # first index
         ]  # indexed s, p
 
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         # Dissatisfaction scores for each project/student combination
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         # CAUTION: get indexes the right way round!
         student_dissatisfaction_with_project = [
             [
@@ -1949,7 +2078,9 @@ class Problem(object):
             for s in range(n_students)  # first index
         ]  # indexed s, p
 
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         # Model
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         m = Model("Student project allocation")
         # Binary variables to optimize, each linking a student to a project
         # CAUTION: get indexes the right way round!
@@ -1964,7 +2095,9 @@ class Problem(object):
             for s in range(n_students)  # first index
         ]  # indexed s, p
 
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         # Objective: happy students/supervisors
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         m.objective = minimize(xsum(
             x[s][p] * weighted_dissatisfaction[s][p]
             for p in range(n_projects)
@@ -1972,19 +2105,38 @@ class Problem(object):
             if eligible[s][p]
         ))
 
-        # Constraints
-        # - For each student, exactly one project:
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        # Constraint: For each student, exactly one project.
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         for s in range(n_students):
             m += xsum(x[s][p]
                       for p in range(n_projects)
                       if eligible[s][p]) == 1
-        # - For each project, up to the maximum number of students:
+        del s
+
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        # Constraint: For each project, up to the maximum number of students.
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         for p, project in enumerate(self.projects):
             m += xsum(x[s][p]
                       for s in range(n_students)
                       if eligible[s][p]) <= project.max_n_students
-        # - Only stable "marriages"?
-        if enforce_stability:
+        del p
+        del project
+
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        # Constraint: Only stable "marriages"?
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        if enforce_stability and stability_ab1996:
+            log.info("Trying for stability via Abeledo & Blum 1996, which "
+                     "assumes strict preferences.")
+            if not self.are_preferences_strict_over_relevant_combos():
+                log.error(
+                    "Stability constraints of Abeledo & Blum (1996) require "
+                    "strict preferences, but preferences are not strict (of "
+                    "students for their projects, and of projects/supervisors "
+                    "for all students who picked them). Failing.")
+                return None
             # Equation 4 of Abeledo & Blum (1996), as above: the stability
             # constraint. We'll use their notation for clarity.
             # When they say a >{x} b, they mean "x prefers a to b".
@@ -2026,11 +2178,96 @@ class Problem(object):
                               f"{stability_constraint}")
                     m += stability_constraint
             # What's the logic here?
+            # Lemma 3.1, which includes equation 4, is from ref. [2], which is
+            # Abeledo & Rothblum (1994,
+            # https://doi.org/10.1016/0166-218X(94)90130-9).
+            # In that work, it's Theorem 3.1, Equation 7, p6. The logic is:
+            # - If there is no better match for either the student or the
+            #   project, then the first two components vanish, x{u,v} is the
+            #   best match, and must be 1. [RNC CAVEAT: THAT REQUIRES STRICT
+            #   ORDERING, which is one of the assumptions. So we need to deal
+            #   with that.] So this seems to be saying "if there's no better
+            #   match, pick it".
+            # - Combined with the other inequalities, which say things like
+            #   "everyone must be assigned" and "not too many students per
+            #   project", forcing us to pick the best excludes picking anything
+            #   that isn't the best.
+            # - [In passing, note that we have a "bipartite" situation
+            #   (projects are distinct from students; defined on p3).]
+            del u
+            del v
+            del i
+            del j
+            del other_project_vars
+            del other_student_vars
+            del vars_to_sum
+            del stability_constraint
 
+        elif enforce_stability and not stability_ab1996:
+            # Can we develop an equivalent when there might be indifference?
+            # We want to say simply "if there's a better marriage, don't pick
+            # this one".
+            log.info("Trying for stability via a custom method, which "
+                     "does not assume strict preferences. (Can be slow.)")
+            stability_constraints = set()  # type: Set[LinExpr]
+            for s_idx in range(n_students):
+                for p_idx in range(n_projects):
+                    if not eligible[s_idx][p_idx]:
+                        continue
+                    s = self.students[s_idx]
+                    p = self.projects[p_idx]
+                    # So, for every eligible student/project combination...
+                    for other_p in self.gen_better_projects(s, p):
+                        # other_p: "Other projects that s prefers to p."
+                        other_p_idx = self.projects.index(other_p)
+                        for other_s in self.gen_worse_students(other_p, s):
+                            # other_s: "Other students that other_p would
+                            # reject in favour of s."
+                            other_s_idx = self.students.index(other_s)
+                            stability_constraint = (
+                                # "Do not assign s to p and simultaneously
+                                # assign other_s to other_p (because s and
+                                # other_p would rather pair up with each
+                                # other)." That is, s and other_p represent a
+                                # blocking pair for a solution that includes a
+                                # match between s and p and also between
+                                # other_s and other_p.
+                                x[s_idx][p_idx] +
+                                x[other_s_idx][other_p_idx] <= 1
+                                # You can't multiply these variables, but you
+                                # can add them.
+                            )
+                            log.debug(
+                                f"s={s}, p={p}, "
+                                f"other_s={other_s}, other_p={other_p}"
+                            )
+                            log.debug(f"Adding stability constraint: "
+                                      f"{stability_constraint}")
+                            stability_constraints.add(stability_constraint)
+                            # We use a set because otherwise we may add the
+                            # same thing several times.
+            log.info(f"Adding {len(stability_constraints)} unique "
+                     f"stability constraints")
+            for stability_constraint in stability_constraints:
+                m += stability_constraint
+            del s_idx
+            del p_idx
+            del s
+            del p
+            del other_p
+            del other_s
+            del other_p_idx
+            del other_s_idx
+            del stability_constraints
+
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         # Optimize
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         m.optimize(max_seconds=self.config.max_time_s)
 
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         # Extract results
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         if not m.num_solutions:
             return None
         # for s in range(n_students):
