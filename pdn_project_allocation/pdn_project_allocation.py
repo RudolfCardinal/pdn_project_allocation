@@ -134,6 +134,7 @@ from collections import OrderedDict
 import csv
 import datetime
 from enum import Enum
+from itertools import product
 import logging
 import operator
 import os
@@ -164,6 +165,7 @@ from matching.games.student_allocation import (
     Supervisor as MGSupervisor,
 )
 from mip import BINARY, LinExpr, minimize, Model, Var, xsum
+from mip.exceptions import SolutionNotAvailable
 
 log = logging.getLogger(__name__)
 
@@ -198,34 +200,36 @@ r"""
 Just for fun, the n-queens problem from
 https://python-mip.readthedocs.io/en/latest/examples.html:
 
+.. code-block:: python
+
 from sys import stdout
 from mip import Model, xsum, MAXIMIZE, BINARY
 
 # number of queens
-n = 75
+n = 60
 
 queens = Model()
 
-x = [[queens.add_var('x({},{})'.format(i, j), var_type=BINARY)
+x = [[queens.add_var(f"x({i},{j})", var_type=BINARY)
       for j in range(n)] for i in range(n)]
 
 # one per row
 for i in range(n):
-    queens += xsum(x[i][j] for j in range(n)) == 1, 'row({})'.format(i)
+    queens += xsum(x[i][j] for j in range(n)) == 1, f"row({i})"
 
 # one per column
 for j in range(n):
-    queens += xsum(x[i][j] for i in range(n)) == 1, 'col({})'.format(j)
+    queens += xsum(x[i][j] for i in range(n)) == 1, f"col({j})"
 
 # diagonal \
 for p, k in enumerate(range(2 - n, n - 2 + 1)):
     queens += xsum(x[i][j] for i in range(n) for j in range(n)
-                   if i - j == k) <= 1, 'diag1({})'.format(p)
+                   if i - j == k) <= 1, f"diag1({p})"
 
 # diagonal /
 for p, k in enumerate(range(3, n + n)):
     queens += xsum(x[i][j] for i in range(n) for j in range(n)
-                   if i + j == k) <= 1, 'diag2({})'.format(p)
+                   if i + j == k) <= 1, f"diag2({p})"
 
 queens.optimize()
 
@@ -237,6 +241,9 @@ if queens.num_solutions:
             text += "\n"
 
 print(text)
+# for v in queens.vars: print(v)
+# for c in queens.constrs: print(c)
+# print(queens.objective)  # blank
 
 """
 
@@ -256,6 +263,7 @@ class SheetNames(object):
     PROJECTS = "Projects"  # input, output
     STUDENT_ALLOCATIONS = "Student_allocations"  # output
     STUDENT_PREFERENCES = "Student_preferences"  # input, output
+    SUPERVISORS = "Supervisors"  # input, output
     SUPERVISOR_PREFERENCES = "Supervisor_preferences"  # input, output
 
 
@@ -263,8 +271,10 @@ class SheetHeadings(object):
     """
     Column headings within the input spreadsheet.
     """
-    PROJECT_NAME = "Project_name"
+    MAX_NUMBER_OF_PROJECTS = "Max_number_of_projects"
     MAX_NUMBER_OF_STUDENTS = "Max_number_of_students"
+    PROJECT = "Project"
+    SUPERVISOR = "Supervisor"
 
 
 class OptimizeMethod(Enum, metaclass=CaseInsensitiveEnumMeta):
@@ -337,6 +347,31 @@ def read_until_empty_row(ws: Worksheet) -> List[List[Any]]:
     return rows
 
 
+def report_on_model(m: Model,
+                    loglevel: int = logging.WARNING,
+                    solution_only: bool = False) -> None:
+    """
+    Shows detail of a MIP model to the log.
+    """
+    lines = ["Model:", "", "- Variables:", ""]
+    try:
+        for v in m.vars:
+            lines.append(f"{v.name} == {v.x}")
+    except SolutionNotAvailable:
+        if solution_only:
+            raise
+        for v in m.vars:
+            lines.append(f"{v.name}")
+    if not solution_only:
+        lines += ["", "- Objective:", ""]
+        lines.append(str(m.objective.sense))
+        lines.append(str(m.objective))
+        lines += ["", "- Constraints:", ""]
+        for c in m.constrs:
+            lines.append(str(c))
+    log.log(loglevel, "\n".join(lines))
+
+
 # =============================================================================
 # Master config
 # =============================================================================
@@ -353,8 +388,10 @@ class Config(object):
             allow_student_preference_ties: bool = False,
             allow_supervisor_preference_ties: bool = False,
             cmd_args: Dict[str, Any] = None,
+            debug_model: bool = False,
             max_time_s: float = DEFAULT_MAX_SECONDS,
             missing_eligibility: bool = None,
+            no_shuffle: bool = False,
             optimize_method: OptimizeMethod = DEFAULT_METHOD,
             preference_power: float = DEFAULT_PREFERENCE_POWER,
             student_must_have_choice: bool = False,
@@ -375,12 +412,16 @@ class Config(object):
                 Allow supervisors to express preference ties?
             cmd_args:
                 Copy of command-line arguments
+            debug_model:
+                Report the MIP model before solving it?
             max_time_s:
                 Time limit for MIP optimizer (s).
             missing_eligibility:
                 Use ``True`` or ``False`` to treat missing eligibility cells
                 as meaning "eligible" or "ineligible", respectively, or
                 ``None`` to treat blank cells as invalid.
+            no_shuffle:
+                Don't shuffle anything. FOR DEBUGGING ONLY.
             optimize_method:
                 Method to use for optimizing.
             preference_power:
@@ -397,8 +438,10 @@ class Config(object):
         self.allow_defunct_projects = allow_defunct_projects
         self.allow_student_preference_ties = allow_student_preference_ties
         self.allow_supervisor_preference_ties = allow_supervisor_preference_ties  # noqa
+        self.debug_model = debug_model
         self.max_time_s = max_time_s
         self.missing_eligibility = missing_eligibility
+        self.no_shuffle = no_shuffle
         self.optimize_method = optimize_method
         self.preference_power = preference_power
         self.student_must_have_choice = student_must_have_choice
@@ -702,7 +745,7 @@ class Student(object):
         """
         String representation.
         """
-        return f"{self.name} (S#{self.number})"
+        return f"{self.name} (St#{self.number})"
 
     def __repr__(self) -> str:
         return auto_repr(self)
@@ -717,7 +760,7 @@ class Student(object):
         """
         Name and number.
         """
-        return f"{self.name} (#{self.number})"
+        return f"{self.name} (St#{self.number})"
 
     def __lt__(self, other: "Student") -> bool:
         """
@@ -753,6 +796,66 @@ class Student(object):
 
 
 # =============================================================================
+# Supervisor
+# =============================================================================
+
+class Supervisor(object):
+    """
+    Simple representation of a supervisor.
+    """
+    def __init__(self,
+                 name: str,
+                 number: int,
+                 max_n_projects: int = None,
+                 max_n_students: int = None) -> None:
+        """
+        Args:
+            name:
+                Supervisor name.
+            number:
+                Supervisor number (cosmetic only: matches input order).
+            max_n_projects:
+                Maximum number of projects this supervisor can supervise.
+                (They may offer more projects, but be unable to support all of
+                them simultaneously.)
+            max_n_students:
+                Maximum number of students this supervisor can take.
+        """
+        assert name, "Missing supervisor name"
+        assert number >= 1, "Bad supervisor number"
+        assert max_n_projects is None or max_n_projects >= 1, (
+            f"Supervisor {name!r}: invalid max_n_projects; must be None or "
+            f">=1 but is {max_n_projects!r}"
+        )
+        assert max_n_students is None or max_n_students >= 1, (
+            f"Supervisor {name!r}: invalid max_n_students; must be None or "
+            f">=1 but is {max_n_projects!r}"
+        )
+        self.name = name
+        self.number = number
+        self.max_n_projects = max_n_projects
+        self.max_n_students = max_n_students
+
+    def __str__(self) -> str:
+        """
+        String representation.
+        """
+        return f"{self.name} (Sv#{self.number})"
+
+    def __repr__(self) -> str:
+        return auto_repr(self)
+
+    def description(self) -> str:
+        """
+        Verbose description.
+        """
+        return (
+            f"{self}: max_n_projects={self.max_n_projects}, "
+            f"max_n_students={self.max_n_students}"
+        )
+
+
+# =============================================================================
 # Project
 # =============================================================================
 
@@ -763,6 +866,7 @@ class Project(object):
     def __init__(self,
                  name: str,
                  number: int,
+                 supervisor: Supervisor,
                  max_n_students: int,
                  allow_defunct_projects: bool = False) -> None:
         """
@@ -771,12 +875,14 @@ class Project(object):
                 Project name.
             number:
                 Project number (cosmetic only; matches input order).
+            supervisor:
+                The project's supervisor
             max_n_students:
                 Maximum number of students supported.
             allow_defunct_projects:
                 Allow projects that permit no students?
         """
-        assert name, "Missing name"
+        assert name, "Missing project name"
         assert number >= 1, "Bad project number"
         if allow_defunct_projects:
             assert max_n_students >= 0, "Bad max_n_students"
@@ -784,8 +890,11 @@ class Project(object):
             assert max_n_students >= 1, "Bad max_n_students"
         self.name = name
         self.number = number
+        self.supervisor = supervisor
         self.max_n_students = max_n_students
         self.supervisor_preferences = None  # type: Optional[Preferences]
+        # ... the project supervisor's preferences for students with respect
+        #     to THIS project.
 
     def __str__(self) -> str:
         """
@@ -848,6 +957,12 @@ class Project(object):
         Returns students in descending order of preference.
         """
         return self.supervisor_preferences.items_descending_order(all_students)
+
+    def is_supervised_by(self, supervisor: Supervisor) -> bool:
+        """
+        Is this the supervisor of this project?
+        """
+        return self.supervisor == supervisor
 
 
 # =============================================================================
@@ -1130,18 +1245,16 @@ class Solution(object):
         # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         ss = wb.create_sheet(SheetNames.STUDENT_ALLOCATIONS)
         ss.append([
-            "Student number",
-            "Student name",
-            "Project number",
-            "Project name",
+            "Student",
+            "Project",
+            "Supervisor",
             "Student's rank of (dissatisfaction with) allocated project",
         ])
         for student, project in self._gen_student_project_pairs():
             ss.append([
-                student.number,
                 student.name,
-                project.number,
                 project.name,
+                project.supervisor.name,
                 student.dissatisfaction(project),
             ])
 
@@ -1150,20 +1263,17 @@ class Solution(object):
         # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         ps = wb.create_sheet(SheetNames.PROJECT_ALLOCATIONS)
         ps.append([
-            "Project number",
-            "Project name",
-            "Student number(s)",
-            "Student name(s)",
+            "Project",
+            "Supervisor",
+            "Student(s)",
             "Students' rank(s) of (dissatisfaction with) allocated project",
             "Project supervisor's rank(s) of (dissatisfaction with) allocated student(s)",  # noqa
         ])
         for project in self.problem.sorted_projects():
-            student_numbers = []  # type: List[int]
             student_names = []  # type: List[str]
             supervisor_dissatisfactions = []  # type: List[float]
             student_dissatisfactions = []  # type: List[float]
             for student in self.allocated_students(project):
-                student_numbers.append(student.number)
                 student_names.append(student.name)
                 supervisor_dissatisfactions.append(
                     project.dissatisfaction(student)
@@ -1172,9 +1282,8 @@ class Solution(object):
                     student.dissatisfaction(project)
                 )
             ps.append([
-                project.number,
                 project.name,
-                ", ".join(str(x) for x in student_numbers),
+                project.supervisor.name,
                 ", ".join(student_names),
                 ", ".join(str(x) for x in student_dissatisfactions),
                 ", ".join(str(x) for x in supervisor_dissatisfactions),
@@ -1185,8 +1294,8 @@ class Solution(object):
         # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         pp = wb.create_sheet(SheetNames.PROJECT_POPULARITY)
         pp.append([
-            "Project number",
-            "Project name",
+            "Project",
+            "Supervisor",
             "Total dissatisfaction score from all students",
             "Number of students expressing a preference",
             "Students expressing a preference",
@@ -1215,8 +1324,8 @@ class Solution(object):
                                             key=operator.itemgetter(1, 0)):
                 student_details.append(f"{student.name} ({studpref})")
             pp.append([
-                project.number,
                 project.name,
+                project.supervisor.name,
                 unpopularity,
                 len(student_details),
                 ", ".join(student_details),
@@ -1442,12 +1551,15 @@ class Problem(object):
     and eligibility (which students are allowed to do which project?).
     """
     def __init__(self,
+                 supervisors: List[Supervisor],
                  projects: List[Project],
                  students: List[Student],
                  config: Config,
                  eligibility: Eligibility = None) -> None:
         """
         Args:
+            supervisors:
+                List of project supervisors.
             projects:
                 List of projects (with supervisor preference information).
             students:
@@ -1462,16 +1574,18 @@ class Problem(object):
         globally fixed random number generator seed). That ensures fairness and
         consistency.
         """
+        self.supervisors = supervisors
         self.projects = projects
         self.students = students
         self.config = config
         self.eligibility = eligibility or Eligibility(students, projects)
         self.eligibility.assert_valid()
         # Fix the order:
-        self.students.sort()
-        random.shuffle(self.students)
-        self.projects.sort()
-        random.shuffle(self.projects)
+        if not config.no_shuffle:
+            self.students.sort()
+            random.shuffle(self.students)
+            self.projects.sort()
+            random.shuffle(self.projects)
 
     # -------------------------------------------------------------------------
     # Representations
@@ -1481,10 +1595,14 @@ class Problem(object):
         """
         We re-sort the output for display purposes.
         """
+        supervisors = "\n".join(
+            sv.description() for sv in self.sorted_supervisors())
         projects = "\n".join(p.description() for p in self.sorted_projects())
         students = "\n".join(s.description() for s in self.sorted_students())
         return (
             f"Problem:\n"
+            f"\n"
+            f"- Supervisors:\n\n{supervisors}\n"
             f"\n"
             f"- Projects:\n\n{projects}\n"
             f"\n"
@@ -1497,6 +1615,12 @@ class Problem(object):
     # Information
     # -------------------------------------------------------------------------
 
+    def sorted_supervisors(self) -> List[Supervisor]:
+        """
+        Supervisors, sorted by number.
+        """
+        return sorted(self.supervisors, key=lambda sv: sv.number)
+
     def sorted_students(self) -> List[Student]:
         """
         Students, sorted by number.
@@ -1508,6 +1632,12 @@ class Problem(object):
         Projects, sorted by number.
         """
         return sorted(self.projects, key=lambda p: p.number)
+
+    def n_supervisors(self) -> int:
+        """
+        Number of supervisors.
+        """
+        return len(self.supervisors)
 
     def n_students(self) -> int:
         """
@@ -1642,24 +1772,80 @@ class Problem(object):
                            data_only=True,  keep_links=False)
 
         # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        # Supervisors
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+        log.info("... reading supervisors...")
+        supervisors = []  # type: List[Supervisor]
+        sv_name_to_supervisor = {}  # type: Dict[str, Supervisor]
+        # This will raise an error if the named sheet does not exist:
+        ws_supervisors = wb[SheetNames.SUPERVISORS]  # type: Worksheet
+        expected_headings = [
+            SheetHeadings.SUPERVISOR,
+            SheetHeadings.MAX_NUMBER_OF_PROJECTS,
+            SheetHeadings.MAX_NUMBER_OF_STUDENTS,
+        ]
+        obtained_headings = [c.value for c in ws_supervisors["A1:C1"][0]]
+        assert obtained_headings == expected_headings, (
+            f"Bad headings to worksheet {SheetNames.SUPERVISORS}; expected "
+            f"{expected_headings!r}, got {obtained_headings!r}"
+        )
+        sv_rows = read_until_empty_row(ws_supervisors)
+        for row_number, row in enumerate(sv_rows[1:], start=2):
+            supervisor_number = row_number - 1
+            supervisor_name = row[0]
+            assert supervisor_name, (
+                f"Missing supervisor name in {SheetNames.SUPERVISORS} "
+                f"row {row_number}"
+            )
+            assert supervisor_name not in sv_name_to_supervisor, (
+                f"Duplicate supervisor name in {SheetNames.SUPERVISORS} "
+                f"row {row_number}: {supervisor_name!r}"
+            )
+            max_n_projects = row[1]
+            assert max_n_projects is None or isinstance(max_n_projects, int), (
+                f"Max max_n_projects in {SheetNames.SUPERVISORS} "
+                f"row {row_number}; is {max_n_projects!r}"
+            )
+            max_n_students = row[2]
+            assert max_n_students is None or isinstance(max_n_students, int), (
+                f"Max max_n_students in {SheetNames.SUPERVISORS} "
+                f"row {row_number}; is {max_n_students!r}"
+            )
+            new_supervisor = Supervisor(
+                name=supervisor_name,
+                number=supervisor_number,
+                max_n_projects=max_n_projects,
+                max_n_students=max_n_students
+            )
+            sv_name_to_supervisor[supervisor_name] = new_supervisor
+            supervisors.append(new_supervisor)
+        n_supervisors = len(supervisors)
+        assert n_supervisors, "No supervisors defined!"
+        log.info(f"Number of supervisors: {n_supervisors}")
+        del expected_headings, obtained_headings
+        del ws_supervisors, sv_rows, row_number, row, supervisor_number
+        del supervisor_name, max_n_projects, max_n_students, new_supervisor
+
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         # Projects
         # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
         log.info("... reading projects...")
         projects = []  # type: List[Project]
-        # These will raise an error if the named sheet does not exist:
         ws_projects = wb[SheetNames.PROJECTS]  # type: Worksheet
-        assert (
-            ws_projects.cell(row=1, column=1).value ==
-            SheetHeadings.PROJECT_NAME and
-            ws_projects.cell(row=1, column=2).value ==
-            SheetHeadings.MAX_NUMBER_OF_STUDENTS
-        ), (
-            f"Bad headings to worksheet {SheetNames.PROJECTS}; expected: "
-            f"{SheetHeadings.PROJECT_NAME}, "
-            f"{SheetHeadings.MAX_NUMBER_OF_STUDENTS:}"
+        project_names = []  # type: List[str]
+        expected_headings = [
+            SheetHeadings.PROJECT,
+            SheetHeadings.MAX_NUMBER_OF_STUDENTS,
+            SheetHeadings.SUPERVISOR,
+        ]
+        obtained_headings = [c.value for c in ws_projects["A1:C1"][0]]
+        assert obtained_headings == expected_headings, (
+            f"Bad headings to worksheet {SheetNames.PROJECTS}; expected "
+            f"{expected_headings!r}, got {obtained_headings!r}"
         )
-        log.debug(f"Projects: max_row = {ws_projects.max_row}")
+        # log.debug(f"Projects: max_row = {ws_projects.max_row}")
         p_rows = read_until_empty_row(ws_projects)
         for row_number, row in enumerate(p_rows[1:], start=2):
             project_number = row_number - 1
@@ -1668,20 +1854,34 @@ class Problem(object):
                 f"Missing project name in {SheetNames.PROJECTS} "
                 f"row {row_number}"
             )
+            assert project_name not in project_names, (
+                f"Duplicate project name in {SheetNames.PROJECTS} "
+                f"row {row_number}: {project_name!r}"
+            )
             max_n_students = row[1]
             assert isinstance(max_n_students, int), (
                 f"Bad max_n_students in {SheetNames.PROJECTS} "
                 f"row {row_number}; is {max_n_students!r}"
             )
+            supervisor_name = row[2]
+            assert supervisor_name in sv_name_to_supervisor, (
+                f"Unknown supervisor in {SheetNames.PROJECTS} "
+                f"row {row_number}: {supervisor_name!r}"
+            )
+            project_names.append(project_name)
             projects.append(Project(
                 name=project_name,
                 number=project_number,
+                supervisor=sv_name_to_supervisor[supervisor_name],
                 max_n_students=max_n_students,
                 allow_defunct_projects=config.allow_defunct_projects
             ))
         n_projects = len(projects)
         assert n_projects, "No projects defined!"
         log.info(f"Number of projects: {n_projects}")
+        del expected_headings, obtained_headings
+        del ws_projects, p_rows, row_number, row, project_number, project_name
+        del max_n_students, supervisor_name, project_names
 
         # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         # Students with their preferences
@@ -1689,6 +1889,7 @@ class Problem(object):
 
         log.info("... reading students and their preferences...")
         students = []  # type: List[Student]
+        student_names = []  # type: List[str]
         ws_students = wb[SheetNames.STUDENT_PREFERENCES]  # type: Worksheet  # noqa
         stp_rows = read_until_empty_row(ws_students)
         # Check project headings
@@ -1708,6 +1909,10 @@ class Problem(object):
                 f"length (expected {n_projects + 1})."
             )
             student_name = row[0]
+            assert student_name not in student_names, (
+                f"Duplicate student name in {SheetNames.STUDENT_PREFERENCES} "
+                f"row {row_number}: {student_name!r}"
+            )
             student_preferences = OrderedDict()  # type: Dict[Project, int]
             for project_number, pref in enumerate(row[1:], start=1):
                 if config.allow_student_preference_ties:
@@ -1721,6 +1926,7 @@ class Problem(object):
                 )
                 project = projects[project_number - 1]
                 student_preferences[project] = pref
+            student_names.append(student_name)
             new_student = Student(
                 name=student_name,
                 number=student_number,
@@ -1731,13 +1937,14 @@ class Problem(object):
             )
             students.append(new_student)
             # log.critical(new_student)
-        del stp_rows
+        del ws_students, stp_rows, row_number, row, student_name, student_names
+        del student_preferences, project_number, pref, ok, project, new_student
         n_students = len(students)
         log.info(f"Number of students: {n_students}")
         assert n_students >= 1
 
         # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-        # Supervisor preferences, stored with their project object
+        # Supervisor preferences, per project
         # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
         log.info("... reading supervisor preferences...")
@@ -1798,9 +2005,8 @@ class Problem(object):
                 allow_ties=config.allow_supervisor_preference_ties,
                 preference_power=config.preference_power,
             )
-        del svp_rows
-        del _sn_from_sheet
-        del _sn_from_students
+        del ws_supervisorprefs, svp_rows, _sn_from_sheet, _sn_from_students
+        del pcol, project, supervisor_prefs, srow, student, pref_value, pref
 
         # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         # Eligibility
@@ -1859,16 +2065,16 @@ class Problem(object):
                             not student.explicitly_ranked_project(project)):
                         eligible = False
                     eligibility.set_eligibility(student, project, eligible)
-            del el_rows
-            del _sn_from_sheet
-            del _sn_from_students
+            del ws_eligibility, el_rows, _sn_from_sheet, _sn_from_students
+            del pcol, project, eligibility_val, eligible
 
         # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         # Create and return the Problem object
         # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
         log.info("... finished reading")
-        return Problem(projects=projects,
+        return Problem(supervisors=supervisors,
+                       projects=projects,
                        students=students,
                        eligibility=eligibility,
                        config=config)
@@ -1892,18 +2098,36 @@ class Problem(object):
         sorted_students = self.sorted_students()
 
         # ---------------------------------------------------------------------
+        # Supervisors
+        # ---------------------------------------------------------------------
+
+        supervisor_sheet = wb.create_sheet(SheetNames.SUPERVISORS)
+        supervisor_sheet.append([
+            SheetHeadings.SUPERVISOR,
+            SheetHeadings.MAX_NUMBER_OF_PROJECTS,
+            SheetHeadings.MAX_NUMBER_OF_STUDENTS
+        ])
+        for sv in self.sorted_supervisors():
+            supervisor_sheet.append([
+                sv.name,
+                sv.max_n_projects,
+                sv.max_n_students
+            ])
+
+        # ---------------------------------------------------------------------
         # Projects
         # ---------------------------------------------------------------------
 
         project_sheet = wb.create_sheet(SheetNames.PROJECTS)
         project_sheet.append([
-            SheetHeadings.PROJECT_NAME,
+            SheetHeadings.PROJECT,
             SheetHeadings.MAX_NUMBER_OF_STUDENTS
         ])
         for p in sorted_projects:
             project_sheet.append([
                 p.name,
-                p.max_n_students
+                p.max_n_students,
+                p.supervisor.name
             ])
 
         # ---------------------------------------------------------------------
@@ -2018,13 +2242,6 @@ class Problem(object):
         # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         # Basic setup
         # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-        def varname(s_: int, p_: int) -> str:
-            """
-            Makes it easier to create/retrieve model variables.
-            The indexes are s for student index, p for project index.
-            """
-            return f"x[{s_},{p_}]"
-
         supervisor_weight = self.config.supervisor_weight
         assert 0 <= supervisor_weight <= 1
         student_weight = 1 - supervisor_weight
@@ -2035,6 +2252,10 @@ class Problem(object):
             f"stability_ab1996={stability_ab1996}")
         n_students = len(self.students)
         n_projects = len(self.projects)
+        using_max_projects_per_supervisor = any(
+            supervisor.max_n_projects is not None
+            for supervisor in self.supervisors
+        )
 
         # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         # Eligibility map
@@ -2087,13 +2308,23 @@ class Problem(object):
         x = [
             [
                 (
-                    m.add_var(varname(s, p), var_type=BINARY)
+                    m.add_var(f"x[s={s},p={p}]", var_type=BINARY)
                     if eligible[s][p] else None
                 )
                 for p in range(n_projects)  # second index
             ]
             for s in range(n_students)  # first index
         ]  # indexed s, p
+        if using_max_projects_per_supervisor:
+            # See below for explanation.
+            project_in_use = [
+                m.add_var(f"project_in_use[p={p}]", var_type=BINARY)
+                if self.projects[p].supervisor.max_n_projects is not None
+                else None  # don't bother for supervisors that don't care
+                for p in range(n_projects)
+            ]  # indexed: p
+        else:
+            project_in_use = []  # type: List[Var]
 
         # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         # Objective: happy students/supervisors
@@ -2109,20 +2340,117 @@ class Problem(object):
         # Constraint: For each student, exactly one project.
         # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         for s in range(n_students):
-            m += xsum(x[s][p]
-                      for p in range(n_projects)
-                      if eligible[s][p]) == 1
+            m += (
+                xsum(x[s][p]
+                     for p in range(n_projects)
+                     if eligible[s][p]) == 1,
+                f"student_{s}_one_project"
+            )
+            # Using a Special Ordered Set here doesn't materially speed things
+            # up (maybe very slightly). I'm not entirely sure what the "weight"
+            # parameter should be. Always 1? Or consecutive?
+            # - https://docs.python-mip.com/en/latest/examples.html#exsos
+            #   ... not terribly clear, but does use non-sequential order (of
+            #   possible plants in a region) as weights.
+            # - http://lpsolve.sourceforge.net/5.5/SOS.htm
+            # - https://en.wikipedia.org/wiki/Special_ordered_set
+            #   ... the benefit is for speed.
+            # - https://www.tu-chemnitz.de/mathematik/discrete/manuals/cplex/doc/pdf/cplex81userman.pdf  # noqa
+            #   ... gives an example (p244) using ordered warehouse size as the
+            #   weights.
+            # So:
+            m.add_sos(
+                sos=[
+                    (x[s][p], p)  # p (the non-sequential order) is the weight
+                    for p in range(n_projects)
+                    if eligible[s][p]
+                ],
+                sos_type=1  # Type 1: only one variable can receive value 1.
+            )
         del s
 
         # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         # Constraint: For each project, up to the maximum number of students.
         # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         for p, project in enumerate(self.projects):
-            m += xsum(x[s][p]
-                      for s in range(n_students)
-                      if eligible[s][p]) <= project.max_n_students
-        del p
-        del project
+            m += (
+                xsum(x[s][p]
+                     for s in range(n_students)
+                     if eligible[s][p]) <= project.max_n_students,
+                f"project_{p}_max_{project.max_n_students}_students"
+            )
+        del p, project
+
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        # Constraint: Maximum number of projects per supervisor
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        # This one is hard.
+        # General advice on formulating these problems:
+        # - http://people.brunel.ac.uk/~mastjjb/jeb/or/moreip.html
+        # - https://pubsonline.informs.org/doi/pdf/10.1287/ited.2017.0177
+        #   ^^^
+        #   THIS ONE! Stevens & Palocsay (2017). Excellent.
+        # Somewhat related problems:
+        # - http://yetanothermathprogrammingconsultant.blogspot.com/2018/04/a-difficult-mip-construct-counting.html  # noqa
+        # - https://math.stackexchange.com/questions/2732897/linear-integer-programming-count-consecutive-ones  # noqa
+        if using_max_projects_per_supervisor:
+            # - We work out whether each project is allocated, using SEPARATE
+            #   (BINARY) VARIABLES.
+            # - The rule for project p is:
+            #       "If any student is allocated to p, then project_in_use[p]."
+            # - That is:
+            #       "SOME student allocated -> ALL that project in use."
+            # - By the Decomposition rule, that translates to:
+            #       student 1 allocated to p -> project p is in use
+            #       student 2 allocated to p -> project p is in use
+            #       ...
+            # - By the Translation rule, each one can be represented by
+            #       student_1_allocated_to_p <= project_p_in_use
+            # - Converting that to a form with constants on the right,
+            #       student_1_allocated_to_p - project_p_in_use <= 0
+
+            for sv, supervisor in enumerate(self.supervisors):
+                if supervisor.max_n_projects is not None:
+                    # 1. Define whether relevant projects are in use.
+                    for p in range(n_projects):
+                        if not self.projects[p].is_supervised_by(supervisor):
+                            continue
+                        for s in range(n_students):
+                            m += (
+                                x[s][p] - project_in_use[p] <= 0,
+                                f"project_{p}_in_use_by_student_{s}"
+                            )
+                    # 2. Constrain the number of projects for the supervisor.
+                    m += (
+                        xsum(
+                            project_in_use[p]
+                            for p in range(n_projects)
+                            if self.projects[p].is_supervised_by(supervisor)
+                        ) <= supervisor.max_n_projects,
+                        f"supervisor_{sv}_max_{supervisor.max_n_projects}_projects"  # noqa
+                    )
+            del sv, supervisor
+
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        # Constraint: Maximum number of students per supervisor
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        for sv, supervisor in enumerate(self.supervisors):
+            if supervisor.max_n_students is not None:
+                m += (
+                    xsum(
+                        # "All students allocated to projects supervised by this
+                        # supervisor."
+                        x[s][p]
+                        for s in range(n_students)
+                        for p in range(n_projects)
+                        if (
+                            self.projects[p].is_supervised_by(supervisor) and
+                            eligible[s][p]  # don't consider impossible pairings
+                        )
+                    ) <= supervisor.max_n_students,
+                    f"supervisor_{sv}_max_{supervisor.max_n_students}_students"
+                )
+        del sv, supervisor
 
         # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         # Constraint: Only stable "marriages"?
@@ -2141,42 +2469,42 @@ class Problem(object):
             # constraint. We'll use their notation for clarity.
             # When they say a >{x} b, they mean "x prefers a to b".
             # Similarly, "a <{x} b" means "x prefers b to a".
-            for u in range(n_students):  # we'll say the student is "u"
-                for v in range(n_projects):  # project is "v"
-                    if not eligible[u][v]:
+            for u, v in product(range(n_students), range(n_projects)):
+                # We'll say the student is "u" and the project is "v"
+                if not eligible[u][v]:
+                    continue
+                student_dis = student_dissatisfaction_with_project[u][v]
+                project_dis = project_dissatisfaction_with_student[u][v]
+                other_project_vars = []  # type: List[Var]
+                other_student_vars = []  # type: List[Var]
+                for i in [_ for _ in range(n_projects) if _ != v]:  # "i"
+                    if not eligible[u][i]:
                         continue
-                    student_dis = student_dissatisfaction_with_project[u][v]
-                    project_dis = project_dissatisfaction_with_student[u][v]
-                    other_project_vars = []  # type: List[Var]
-                    other_student_vars = []  # type: List[Var]
-                    for i in [_ for _ in range(n_projects) if _ != v]:  # "i"
-                        if not eligible[u][i]:
-                            continue
-                        if (student_dissatisfaction_with_project[u][i] <
-                                student_dis):
-                            # Student "u" prefers project "i" to project "v";
-                            # that is, i >{u} v.
-                            other_project_vars.append(x[u][i])
-                    for j in [_ for _ in range(n_students) if _ != u]:  # "j"
-                        if not eligible[j][v]:
-                            continue
-                        if (project_dissatisfaction_with_student[j][v] <
-                                project_dis):
-                            # Project "v" prefers student "j" to student "u";
-                            # that is, j >{v} u.
-                            other_student_vars.append(x[j][v])
-                            # I'm pretty sure they must mean x{j,v} not x{v,j},
-                            # since the variable x is always suffixed
-                            # {u-type-thing, v-type-thing}, e.g. page 323.
-                    vars_to_sum = (
-                        other_project_vars +  # sum{for i >{u} v}{x{u,i}}
-                        other_student_vars +  # sum{for j >{v} u}{x{j,v}}
-                        [x[u][v]]  # "x{u,v}"
-                    )
-                    stability_constraint = xsum(vars_to_sum) >= 1  # Eq. 4.
-                    log.debug(f"Adding stability constraint: "
-                              f"{stability_constraint}")
-                    m += stability_constraint
+                    if (student_dissatisfaction_with_project[u][i] <
+                            student_dis):
+                        # Student "u" prefers project "i" to project "v";
+                        # that is, i >{u} v.
+                        other_project_vars.append(x[u][i])
+                for j in [_ for _ in range(n_students) if _ != u]:  # "j"
+                    if not eligible[j][v]:
+                        continue
+                    if (project_dissatisfaction_with_student[j][v] <
+                            project_dis):
+                        # Project "v" prefers student "j" to student "u";
+                        # that is, j >{v} u.
+                        other_student_vars.append(x[j][v])
+                        # I'm pretty sure they must mean x{j,v} not x{v,j},
+                        # since the variable x is always suffixed
+                        # {u-type-thing, v-type-thing}, e.g. page 323.
+                vars_to_sum = (
+                    other_project_vars +  # sum{for i >{u} v}{x{u,i}}
+                    other_student_vars +  # sum{for j >{v} u}{x{j,v}}
+                    [x[u][v]]  # "x{u,v}"
+                )
+                stability_constraint = xsum(vars_to_sum) >= 1  # Eq. 4.
+                log.debug(f"Adding stability constraint: "
+                          f"{stability_constraint}")
+                m += stability_constraint, f"stability_s{u}_p{v}"
             # What's the logic here?
             # Lemma 3.1, which includes equation 4, is from ref. [2], which is
             # Abeledo & Rothblum (1994,
@@ -2194,14 +2522,8 @@ class Problem(object):
             #   that isn't the best.
             # - [In passing, note that we have a "bipartite" situation
             #   (projects are distinct from students; defined on p3).]
-            del u
-            del v
-            del i
-            del j
-            del other_project_vars
-            del other_student_vars
-            del vars_to_sum
-            del stability_constraint
+            del u, v
+            del vars_to_sum, stability_constraint
 
         elif enforce_stability and not stability_ab1996:
             # Can we develop an equivalent when there might be indifference?
@@ -2210,55 +2532,60 @@ class Problem(object):
             log.info("Trying for stability via a custom method, which "
                      "does not assume strict preferences. (Can be slow.)")
             stability_constraints = set()  # type: Set[LinExpr]
-            for s_idx in range(n_students):
-                for p_idx in range(n_projects):
-                    if not eligible[s_idx][p_idx]:
-                        continue
-                    s = self.students[s_idx]
-                    p = self.projects[p_idx]
-                    # So, for every eligible student/project combination...
-                    for other_p in self.gen_better_projects(s, p):
-                        # other_p: "Other projects that s prefers to p."
-                        other_p_idx = self.projects.index(other_p)
-                        for other_s in self.gen_worse_students(other_p, s):
-                            # other_s: "Other students that other_p would
-                            # reject in favour of s."
-                            other_s_idx = self.students.index(other_s)
-                            stability_constraint = (
-                                # "Do not assign s to p and simultaneously
-                                # assign other_s to other_p (because s and
-                                # other_p would rather pair up with each
-                                # other)." That is, s and other_p represent a
-                                # blocking pair for a solution that includes a
-                                # match between s and p and also between
-                                # other_s and other_p.
-                                x[s_idx][p_idx] +
-                                x[other_s_idx][other_p_idx] <= 1
-                                # You can't multiply these variables, but you
-                                # can add them.
-                            )
-                            log.debug(
-                                f"s={s}, p={p}, "
-                                f"other_s={other_s}, other_p={other_p}"
-                            )
-                            log.debug(f"Adding stability constraint: "
-                                      f"{stability_constraint}")
-                            stability_constraints.add(stability_constraint)
+            stability_constraint_tuples = []  # type: List[Tuple[LinExpr, str]]
+            for s_idx, p_idx in product(range(n_students), range(n_projects)):
+                if not eligible[s_idx][p_idx]:
+                    continue
+                s = self.students[s_idx]
+                p = self.projects[p_idx]
+                # So, for every eligible student/project combination...
+                for other_p in self.gen_better_projects(s, p):
+                    # other_p: "Other projects that s prefers to p."
+                    other_p_idx = self.projects.index(other_p)
+                    for other_s in self.gen_worse_students(other_p, s):
+                        # other_s: "Other students that other_p would
+                        # reject in favour of s."
+                        other_s_idx = self.students.index(other_s)
+                        constraint = (
+                            # "Do not assign s to p and simultaneously
+                            # assign other_s to other_p (because s and
+                            # other_p would rather pair up with each
+                            # other)." That is, s and other_p represent a
+                            # blocking pair for a solution that includes a
+                            # match between s and p and also between
+                            # other_s and other_p.
+                            x[s_idx][p_idx] + x[other_s_idx][other_p_idx] <= 1
+                            # You can't multiply these variables, but you
+                            # can add them.
+                        )
+                        if constraint not in stability_constraints:
                             # We use a set because otherwise we may add the
                             # same thing several times.
+                            log.debug(
+                                f"Adding stability constraint: {constraint}, "
+                                f"for s={s}, p={p}, "
+                                f"other_s={other_s}, other_p={other_p}"
+                            )
+                            stability_constraints.add(constraint)
+                            stability_constraint_tuples.append((
+                                constraint,
+                                f"stability_s{s_idx}_p{p_idx}_"
+                                f"other_s{other_s_idx}_other_p{other_p_idx}"
+                            ))
+                del s, p
             log.info(f"Adding {len(stability_constraints)} unique "
                      f"stability constraints")
-            for stability_constraint in stability_constraints:
-                m += stability_constraint
-            del s_idx
-            del p_idx
-            del s
-            del p
-            del other_p
-            del other_s
-            del other_p_idx
-            del other_s_idx
-            del stability_constraints
+            for stability_constraint_tuple in stability_constraint_tuples:
+                m += stability_constraint_tuple
+            del s_idx, p_idx
+            del stability_constraints, stability_constraint_tuples
+
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        # Debug?
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        # import pdb; pdb.set_trace()
+        if self.config.debug_model:
+            report_on_model(m)
 
         # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         # Optimize
@@ -2266,17 +2593,18 @@ class Problem(object):
         m.optimize(max_seconds=self.config.max_time_s)
 
         # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        # Debug?
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        if self.config.debug_model:
+            report_on_model(m, solution_only=True)
+
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         # Extract results
         # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         if not m.num_solutions:
             return None
-        # for s in range(n_students):
-        #     for p in range(n_projects):
-        #         log.debug(f"x[{s}][{p}].x = {x[s][p].x}")
-        # self._debug_model_vars(m)
         project_indexes = [
             next(p for p in range(n_projects)
-                 # if m.var_by_name(varname(s, p)).x >= ALMOST_ONE)
                  if eligible[s][p] and x[s][p].x >= ALMOST_ONE)
             # ... note that the value of a solved variable is var.x
             # If those two expressions are not the same, there's a bug.
@@ -2286,16 +2614,6 @@ class Problem(object):
         if enforce_stability:
             assert solution.is_stable()
         return solution
-
-    @staticmethod
-    def _debug_model_vars(m: Model) -> None:
-        """
-        Show the names/values of model variables after fitting.
-        """
-        lines = [f"Variables in model {m.name!r}:"]
-        for v in m.vars:
-            lines.append(f"{v.name} == {v.x}")
-        log.debug("\n".join(lines))
 
     def _make_solution(self,
                        project_indexes: Sequence[int],
@@ -2488,15 +2806,28 @@ The input spreadsheet should have the following format (in each case, the
 first row is the title row):
 
     Sheet name:
+        {SheetNames.SUPERVISORS}
+    Description:
+        List of supervisors (one per row) and their project/student capacity.
+        Capacity values can be left blank for "no maximum".
+    Format:
+        {SheetHeadings.SUPERVISOR}      {SheetHeadings.MAX_NUMBER_OF_PROJECTS}  {SheetHeadings.MAX_NUMBER_OF_STUDENTS}
+        Dr Smith        3                       5
+        Dr Jones
+        Dr Lucas                                2
+        ...             ...                     ...
+        
+    Sheet name:
         {SheetNames.PROJECTS}
     Description:
-        List of projects (one per row) and their student capacity.
+        List of projects (one per row), their student capacity, and their
+        supervisor.
     Format:
-        {SheetHeadings.PROJECT_NAME}    {SheetHeadings.MAX_NUMBER_OF_STUDENTS}
-        Project One     1
-        Project Two     1
-        Project Three   2
-        ...             ...
+        {SheetHeadings.PROJECT}         {SheetHeadings.MAX_NUMBER_OF_STUDENTS}  {SheetHeadings.SUPERVISOR}
+        Project One     1                       Dr Jones
+        Project Two     1                       Dr Jones
+        Project Three   2                       Dr Smith
+        ...             ...                     ...
         
     Sheet name:
         {SheetNames.STUDENT_PREFERENCES}
@@ -2516,6 +2847,7 @@ first row is the title row):
         projects. If absent, all students are eligible for all projects.
         Use {TRUE_VALUES} for "eligible".
         Use {FALSE_VALUES} for "ineligible".
+        Use --missing_eligibility to control the handling of empty cells.
     Format:
         <ignored>       Project One     Project Two     Project Three   ...
         Miss Smith      1               1               1               ...
@@ -2607,6 +2939,14 @@ first row is the title row):
              "tempts the operator to re-run with different seeds). "
              "FOR DEBUGGING USE ONLY."
     )
+    technical_group.add_argument(
+        "--no_shuffle", action="store_true",
+        help="Don't shuffle anything. FOR DEBUGGING USE ONLY."
+    )
+    technical_group.add_argument(
+        "--debug_model", action="store_true",
+        help="Report the details of the MIP model before solving."
+    )
     method_k, method_desc = keys_descriptions_from_enum(
         OptimizeMethod, keys_to_lower=True)
     method_group.add_argument(
@@ -2634,9 +2974,11 @@ first row is the title row):
         allow_student_preference_ties=args.allow_student_preference_ties,
         allow_supervisor_preference_ties=args.allow_supervisor_preference_ties,
         cmd_args=vars(args),
+        debug_model=args.debug_model,
         filename=args.filename,
         max_time_s=args.maxtime,
         missing_eligibility=args.missing_eligibility,
+        no_shuffle=args.no_shuffle,
         optimize_method=OptimizeMethod[args.method],
         preference_power=args.preference_power,
         student_must_have_choice=args.student_must_have_choice,

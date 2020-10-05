@@ -53,6 +53,10 @@ Description of the problem
 
 - Every project can take a certain (project-specific) number of students.
 
+- Every supervisor may, optionally, set a limit on the number of projects they
+  can run (from the ones they offered), and/or the total number of students
+  they can take.
+
 - Students rank projects from 1 (most preferred) onwards.
 
   - If they don't rank enough, they are treated as being indifferent between
@@ -61,8 +65,10 @@ Description of the problem
 - Output must be consistent across runs, and consistent against re-ordering of
   students in the input data.
 
-- Supervisors can also express preferences. The overall balance between
-  "student satisfaction" and "supervisor satisfaction" is set by a parameter.
+- Supervisors can also express preferences (on a per-project basis; the
+  students they prefer for one project might not be the students they prefer
+  for another). The overall balance between "student satisfaction" and
+  "supervisor satisfaction" is set by a parameter.
 
 - Some student/project combinations can be marked as ineligible (e.g. a student
   might not have the necessary background, no matter how much they want the
@@ -75,7 +81,9 @@ Explanation of how this program works
 **Absolute constraints**
 
 - The course administrator and the supervisors determine **which projects** are
-  available, and **how many students** each project can take.
+  available, **how many students each project** can take, and, optionally,
+  **how many projects** each supervisor can actually run simultaneously, and/or
+  **how many students each supervisor** can take in total.
 
 - The course administrator and the supervisors also determine student
   **eligibility** for each project. (Students might be ineligible because they're
@@ -332,13 +340,15 @@ preference list" (not that no students are unassigned!).
 We can go one step further, and enforce stability via integer linear
 programming, as per Abeledo & Blum (1996,
 https://doi.org/10.1016/0024-3795(95)00052-6 ). However, the algorithm assumes
-strict ordering (e.g. that each supervisor strictly ranks all
+strict ordering (e.g. that each student strictly ranks all projects, and each
+supervisor strictly ranks all students that apply to their projects).
 
 Since we can't have any student unassigned, and we are now up to Aug 2020 in
-the research literature, I shall stop there and offer "dissatisfaction
-minimization within the constraint of stability, falling back to
-dissatisfaction minimization" as the best practical option that I've come up
-with, despite the fact that it offers some unstable solutions.
+the research literature, I've done two things: (a) offered a stability constraint
+via a (new?) algorithm that does not require strict preferences, allowing
+"dissatisfaction minimization" within that constraint, or (b) the option to
+choose, or fall back to, overall dissatisfaction minimization (though that may
+offer some unstable solutions).
 
 
 Changelog
@@ -407,8 +417,10 @@ Changelog
   - New algorithm to produce a stable solution (and within that, the best
     stable solution) even despite non-strict preference orderings.
 
+- 2020-10-05, v1.2:
 
-To do
------
-
-- Implement separate "supervisor capacity" as well as "project capacity".
+  - Renamed column ``Project_name`` to ``Project`` in the "Projects"
+    spreadsheet.
+  - New "Supervisors" spreadsheet.
+  - Optional constraint: maximum number of students per supervisor.
+  - Optional constraint: maximum number of projects per supervisor.

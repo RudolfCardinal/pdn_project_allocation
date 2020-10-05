@@ -56,6 +56,7 @@ def main() -> None:
     process("test7_eligibility.xlsx", "test_out7.xlsx")
     process("test8_tied_preferences.xlsx", "test_out8.xlsx",
             ["--allow_supervisor_preference_ties"])
+    process("test9_supervisor_constraints.xlsx", "test_out9.xlsx")
 
 
 if __name__ == "__main__":
