@@ -2456,6 +2456,9 @@ class Problem(object):
         # Constraint: Only stable "marriages"?
         # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         if enforce_stability and stability_ab1996:
+            # +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+            # Stability via Abeledo & Blum 1996, assuming strict preferences
+            # +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
             log.info("Trying for stability via Abeledo & Blum 1996, which "
                      "assumes strict preferences.")
             if not self.are_preferences_strict_over_relevant_combos():
@@ -2526,6 +2529,9 @@ class Problem(object):
             del vars_to_sum, stability_constraint
 
         elif enforce_stability and not stability_ab1996:
+            # +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+            # Stability via a custom approach allowing non-strict preferences
+            # +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
             # Can we develop an equivalent when there might be indifference?
             # We want to say simply "if there's a better marriage, don't pick
             # this one".
