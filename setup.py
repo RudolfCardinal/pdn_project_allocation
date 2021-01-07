@@ -44,7 +44,7 @@ setup(
         'mip==1.5.3',
         'matching==1.3.2',
         'openpyxl==3.0.5',
-        'lxml==4.4.1',  # Will speed up openpyxl export
+        'lxml==4.6.2',  # Will speed up openpyxl export
     ],
 
     # Launch scripts:
