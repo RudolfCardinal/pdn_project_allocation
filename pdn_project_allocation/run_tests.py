@@ -3,6 +3,27 @@
 """
 pdn_project_allocation/run_tests.py
 
+===============================================================================
+
+    Copyright (C) 2019-2021 Rudolf Cardinal (rudolf@pobox.com).
+
+    This file is part of pdn_project_allocation.
+
+    This is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This software is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this software. If not, see <https://www.gnu.org/licenses/>.
+
+===============================================================================
+
 Run tests for pdn_project_allocation.
 """
 
@@ -17,10 +38,14 @@ from cardinal_pythonlib.logs import main_only_quicksetup_rootlogger
 log = logging.getLogger(__name__)
 
 THISDIR = os.path.dirname(os.path.realpath(__file__))
-PROG = os.path.join(THISDIR, "pdn_project_allocation.py")
+PROG = os.path.join(THISDIR, "main.py")
 INPUTDIR = os.path.join(THISDIR, "testdata")
 OUTPUTDIR = os.path.join(THISDIR, os.pardir, "testoutput")
 
+
+# =============================================================================
+# Tests
+# =============================================================================
 
 def process(infile: str, outfile: str,
             other_options: List[str] = None) -> None:
@@ -43,6 +68,10 @@ def process(infile: str, outfile: str,
     log.warning(cmdline_quote(cmdargs))
     subprocess.check_call(cmdargs)
 
+
+# =============================================================================
+# Command-line entry point
+# =============================================================================
 
 def main() -> None:
     main_only_quicksetup_rootlogger()

@@ -1,6 +1,24 @@
-.. README.rst
+..  README.rst
+
+..  Copyright (C) 2019-2021 Rudolf Cardinal (rudolf@pobox.com).
+    .
+    This file is part of pdn_project_allocation.
+    .
+    This is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+    .
+    This software is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+    GNU General Public License for more details.
+    .
+    You should have received a copy of the GNU General Public License
+    along with this software. If not, see <http://www.gnu.org/licenses/>.
 
 .. _Meld: https://meldmerge.org/
+
 
 pdn_project_allocation
 ======================
@@ -436,3 +454,7 @@ Changelog
   - Bump ``openpyxl`` from 3.0.5 to 3.0.9.
   - Bump ``lxml`` from 4.4.1 to 4.6.3.
   - Bump ``matching`` from 1.3.2 to 1.4.
+
+- 2021-10-03, v1.4.0:
+
+  - Project short titles, used as column headings.
