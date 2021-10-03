@@ -1286,7 +1286,7 @@ class Solution(object):
             "Student",
             "Project",
             "Supervisor",
-            "Student's rank of (dissatisfaction with) allocated project",
+            "Student's rank of allocated project (dissatisfaction score)",
         ])
         for student, project in self._gen_student_project_pairs():
             ss.append([
@@ -1304,8 +1304,8 @@ class Solution(object):
             "Project",
             "Supervisor",
             "Student(s)",
-            "Students' rank(s) of (dissatisfaction with) allocated project",
-            "Project supervisor's rank(s) of (dissatisfaction with) allocated student(s)",  # noqa
+            "Students' rank(s) of allocated project (dissatisfaction score)",
+            "Project supervisor's rank(s) of allocated student(s) (dissatisfaction score)",  # noqa
         ])
         for project in self.problem.sorted_projects():
             student_names = []  # type: List[str]
@@ -1459,7 +1459,7 @@ class Solution(object):
                 "Student name",
                 "Project number",
                 "Project name",
-                "Student's rank of (dissatisfaction with) allocated project",
+                "Student's rank of allocated project (dissatisfaction score)",
             ])
             for student, project in self._gen_student_project_pairs():
                 writer.writerow([
