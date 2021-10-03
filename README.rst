@@ -344,11 +344,11 @@ strict ordering (e.g. that each student strictly ranks all projects, and each
 supervisor strictly ranks all students that apply to their projects).
 
 Since we can't have any student unassigned, and we are now up to Aug 2020 in
-the research literature, I've done two things: (a) offered a stability constraint
-via a (new?) algorithm that does not require strict preferences, allowing
-"dissatisfaction minimization" within that constraint, or (b) the option to
-choose, or fall back to, overall dissatisfaction minimization (though that may
-offer some unstable solutions).
+the research literature, I've done two things: (a) offered a stability
+constraint via a (new?) algorithm that does not require strict preferences,
+allowing "dissatisfaction minimization" within that constraint, or (b) the
+option to choose, or fall back to, overall dissatisfaction minimization (though
+that may offer some unstable solutions).
 
 
 Changelog
@@ -417,10 +417,22 @@ Changelog
   - New algorithm to produce a stable solution (and within that, the best
     stable solution) even despite non-strict preference orderings.
 
-- 2020-10-05, v1.2:
+- 2020-10-05, v1.2.0:
 
   - Renamed column ``Project_name`` to ``Project`` in the "Projects"
     spreadsheet.
   - New "Supervisors" spreadsheet.
   - Optional constraint: maximum number of students per supervisor.
   - Optional constraint: maximum number of projects per supervisor.
+
+- 2021-10-03, v1.3.0:
+
+  - Support multiple supervisors per project. (Per-supervisor constraints
+    continue to work.)
+  - More helpful error messages.
+  - Deal with superfluous whitespace (e.g. around project/student names).
+  - Bump ``mip`` from 1.5.3 to 1.13.0.
+  - Bump ``cardinal_pythonlib`` from 1.0.96 to 1.1.7.
+  - Bump ``openpyxl`` from 3.0.5 to 3.0.9.
+  - Bump ``lxml`` from 4.4.1 to 4.6.3.
+  - Bump ``matching`` from 1.3.2 to 1.4.

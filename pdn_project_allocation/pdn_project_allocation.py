@@ -133,6 +133,7 @@ import argparse
 from collections import OrderedDict
 import csv
 import datetime
+import distutils.util
 from enum import Enum
 from itertools import product
 import logging
@@ -169,8 +170,8 @@ from mip.exceptions import SolutionNotAvailable
 
 log = logging.getLogger(__name__)
 
-VERSION = "1.2.0"
-VERSION_DATE = "2020-10-05"
+VERSION = "1.3.0"
+VERSION_DATE = "2021-10-03"
 
 ALMOST_ONE = 0.99
 DEFAULT_PREFERENCE_POWER = 1.0
@@ -278,7 +279,10 @@ class SheetHeadings(object):
 
 
 class OptimizeMethod(Enum, metaclass=CaseInsensitiveEnumMeta):
-    MINIMIZE_DISSATISFACTION = "Minimize weighted dissatisfaction"
+    MINIMIZE_DISSATISFACTION = (
+        'Minimize weighted dissatisfaction '
+        '(not necessarily requiring stable "marriages")'
+    )
     MINIMIZE_DISSATISFACTION_STABLE_AB1996 = (
         "Minimize weighted dissatisfaction, requiring stability, "
         "via Abeledo & Blum (1996) method"
@@ -370,6 +374,23 @@ def report_on_model(m: Model,
         for c in m.constrs:
             lines.append(str(c))
     log.log(loglevel, "\n".join(lines))
+
+
+def csv_to_supervisor_names(csv_names: str) -> List[str]:
+    """
+    From a string of comma-separated supervisor names like ``Dr Smith, Dr
+    Jones``, return the supervisor names, like ``['Dr Smith', 'Dr Jones']``.
+    """
+    if not csv:
+        return []
+    return [x.strip() for x in csv_names.split(",")]
+
+
+def supervisor_names_to_csv(names: List[str]) -> str:
+    """
+    Opposite of :func:`csv_to_supervisor_names`.
+    """
+    return ", ".join(names)
 
 
 # =============================================================================
@@ -583,11 +604,11 @@ class Preferences(object):
         expected_allocation = sum_of_integers_in_inclusive_range(
             1, n_expressed)
         assert self._allocated_dissatisfaction == expected_allocation, (
-            f"Dissatisfaction scores add up to "
-            f"{self._allocated_dissatisfaction}, but must add up to "
-            f"{expected_allocation}, since you have expressed "
+            f"For preferences expressed by {self._owner!r}, dissatisfaction "
+            f"scores add up to {self._allocated_dissatisfaction}, but must "
+            f"add up to {expected_allocation}, since you have expressed "
             f"{n_expressed} preferences (you can only express the 'top n' "
-            f"preferences)"
+            f"preferences)."
         )
         assert (
             self._allocated_dissatisfaction <= self._total_dissatisfaction
@@ -866,7 +887,7 @@ class Project(object):
     def __init__(self,
                  name: str,
                  number: int,
-                 supervisor: Supervisor,
+                 supervisors: List[Supervisor],
                  max_n_students: int,
                  allow_defunct_projects: bool = False) -> None:
         """
@@ -875,8 +896,8 @@ class Project(object):
                 Project name.
             number:
                 Project number (cosmetic only; matches input order).
-            supervisor:
-                The project's supervisor
+            supervisors:
+                The project's supervisor(s).
             max_n_students:
                 Maximum number of students supported.
             allow_defunct_projects:
@@ -890,7 +911,7 @@ class Project(object):
             assert max_n_students >= 1, "Bad max_n_students"
         self.name = name
         self.number = number
-        self.supervisor = supervisor
+        self.supervisors = supervisors
         self.max_n_students = max_n_students
         self.supervisor_preferences = None  # type: Optional[Preferences]
         # ... the project supervisor's preferences for students with respect
@@ -958,11 +979,28 @@ class Project(object):
         """
         return self.supervisor_preferences.items_descending_order(all_students)
 
+    def supervisor_name(self) -> str:
+        """
+        Name of this project's supervisor(s), in human-readable CSV format.
+        """
+        names = [s.name for s in self.supervisors]
+        return supervisor_names_to_csv(names)
+
     def is_supervised_by(self, supervisor: Supervisor) -> bool:
         """
-        Is this the supervisor of this project?
+        Is this project supervised by this particular supervisor?
         """
-        return self.supervisor == supervisor
+        return supervisor in self.supervisors
+
+    def at_least_one_supervisor_has_a_project_cap(self) -> bool:
+        """
+        Does at least one supervisor of this project? have a cap on the number
+        of projects they can take?
+        """
+        return any(
+            s.max_n_projects is not None
+            for s in self.supervisors
+        )
 
 
 # =============================================================================
@@ -1254,7 +1292,7 @@ class Solution(object):
             ss.append([
                 student.name,
                 project.name,
-                project.supervisor.name,
+                project.supervisor_name(),
                 student.dissatisfaction(project),
             ])
 
@@ -1283,7 +1321,7 @@ class Solution(object):
                 )
             ps.append([
                 project.name,
-                project.supervisor.name,
+                project.supervisor_name(),
                 ", ".join(student_names),
                 ", ".join(str(x) for x in student_dissatisfactions),
                 ", ".join(str(x) for x in supervisor_dissatisfactions),
@@ -1297,9 +1335,9 @@ class Solution(object):
             "Project",
             "Supervisor",
             "Total dissatisfaction score from all students",
+            "Allocated student(s)",
             "Number of students expressing a preference",
             "Students expressing a preference",
-            "Allocated student(s)",
         ])
         proj_to_unpop = {}  # type: Dict[Project, float]
         for project in self.problem.projects:
@@ -1325,11 +1363,11 @@ class Solution(object):
                 student_details.append(f"{student.name} ({studpref})")
             pp.append([
                 project.name,
-                project.supervisor.name,
+                project.supervisor_name(),
                 unpopularity,
+                allocated_students,
                 len(student_details),
                 ", ".join(student_details),
-                allocated_students,
             ])
 
         # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -1393,6 +1431,7 @@ class Solution(object):
         self.problem.write_to_xlsx_workbook(wb)
 
         wb.save(filename)
+        wb.close()
 
     def write_data(self, filename: str) -> None:
         """
@@ -1793,7 +1832,7 @@ class Problem(object):
         sv_rows = read_until_empty_row(ws_supervisors)
         for row_number, row in enumerate(sv_rows[1:], start=2):
             supervisor_number = row_number - 1
-            supervisor_name = row[0]
+            supervisor_name = row[0].strip()
             assert supervisor_name, (
                 f"Missing supervisor name in {SheetNames.SUPERVISORS} "
                 f"row {row_number}"
@@ -1849,7 +1888,7 @@ class Problem(object):
         p_rows = read_until_empty_row(ws_projects)
         for row_number, row in enumerate(p_rows[1:], start=2):
             project_number = row_number - 1
-            project_name = row[0]
+            project_name = row[0].strip()
             assert project_name, (
                 f"Missing project name in {SheetNames.PROJECTS} "
                 f"row {row_number}"
@@ -1863,16 +1902,19 @@ class Problem(object):
                 f"Bad max_n_students in {SheetNames.PROJECTS} "
                 f"row {row_number}; is {max_n_students!r}"
             )
-            supervisor_name = row[2]
-            assert supervisor_name in sv_name_to_supervisor, (
-                f"Unknown supervisor in {SheetNames.PROJECTS} "
-                f"row {row_number}: {supervisor_name!r}"
-            )
+            supervisor_names = csv_to_supervisor_names(row[2])
+            this_project_supervisors = []
+            for sv_name in supervisor_names:
+                assert sv_name in sv_name_to_supervisor, (
+                    f"Unknown supervisor in {SheetNames.PROJECTS} "
+                    f"row {row_number}: {sv_name!r} (full cell is {row[2]!r})"
+                )
+                this_project_supervisors.append(sv_name_to_supervisor[sv_name])
             project_names.append(project_name)
             projects.append(Project(
                 name=project_name,
                 number=project_number,
-                supervisor=sv_name_to_supervisor[supervisor_name],
+                supervisors=this_project_supervisors,
                 max_n_students=max_n_students,
                 allow_defunct_projects=config.allow_defunct_projects
             ))
@@ -1881,7 +1923,8 @@ class Problem(object):
         log.info(f"Number of projects: {n_projects}")
         del expected_headings, obtained_headings
         del ws_projects, p_rows, row_number, row, project_number, project_name
-        del max_n_students, supervisor_name, project_names
+        del max_n_students, supervisor_names, sv_name, project_names
+        del this_project_supervisors
 
         # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         # Students with their preferences
@@ -1893,22 +1936,23 @@ class Problem(object):
         ws_students = wb[SheetNames.STUDENT_PREFERENCES]  # type: Worksheet  # noqa
         stp_rows = read_until_empty_row(ws_students)
         # Check project headings
-        assert all(
-            stp_rows[0][i + 1] == projects[i].name
-            for i in range(n_projects)
-        ), (
-            f"First row of {SheetNames.STUDENT_PREFERENCES} sheet "
-            f"must contain all project names in the same order as in the "
-            f"{SheetNames.PROJECTS} sheet"
-        )
+        for i in range(n_projects):
+            assert stp_rows[0][i + 1].strip() == projects[i].name, (
+                f"First row of {SheetNames.STUDENT_PREFERENCES} sheet must "
+                f"contain all project names in the same order as in the "
+                f"{SheetNames.PROJECTS} sheet. For project {i + 1}, the "
+                f"project name is {projects[i].name!r}, but the column "
+                f"heading is {stp_rows[0][i + 1]!r}."
+            )
         for row_number, row in enumerate(stp_rows[1:], start=2):
             student_number = row_number - 1
+            student_name = row[0].strip()
             assert len(row) == n_projects + 1, (
                 f"In {SheetNames.STUDENT_PREFERENCES}, student on row "
-                f"{row_number} has a preference row of the wrong "
-                f"length (expected {n_projects + 1})."
+                f"{row_number} (named {student_name!r}) has a preference row "
+                f"of the wrong length (expected {n_projects + 1}, got "
+                f"{len(row)})."
             )
-            student_name = row[0]
             assert student_name not in student_names, (
                 f"Duplicate student name in {SheetNames.STUDENT_PREFERENCES} "
                 f"row {row_number}: {student_name!r}"
@@ -1936,7 +1980,6 @@ class Problem(object):
                 preference_power=config.preference_power,
             )
             students.append(new_student)
-            # log.critical(new_student)
         del ws_students, stp_rows, row_number, row, student_name, student_names
         del student_preferences, project_number, pref, ok, project, new_student
         n_students = len(students)
@@ -1965,21 +2008,23 @@ class Problem(object):
             f"plus {n_projects} columns for projects). Yours has "
             f"{len(svp_rows[0])}."
         )
-        assert all(
-            svp_rows[0][i + 1] == projects[i].name
-            for i in range(n_projects)
-        ), (
-            f"First row of {SheetNames.SUPERVISOR_PREFERENCES} sheet "
-            f"must contain all project names in the same order as in the "
-            f"{SheetNames.PROJECTS} sheet"
-        )
+        for i in range(n_projects):
+            assert svp_rows[0][i + 1].strip() == projects[i].name, (
+                f"First row of {SheetNames.SUPERVISOR_PREFERENCES} sheet "
+                f"must contain all project names in the same order as in the "
+                f"{SheetNames.PROJECTS} sheet. For project {i + 1}, the "
+                f"project name is {projects[i].name!r}, but the column "
+                f"heading is {svp_rows[0][i + 1]!r}."
+            )
         # Check student names
         assert len(svp_rows) == 1 + n_students, (
             f"Sheet {SheetNames.SUPERVISOR_PREFERENCES} should have "
             f"{1 + n_students} rows (one header row plus {n_students} "
             f"rows for students). Yours has {len(svp_rows)}."
         )
-        _sn_from_sheet = [svp_rows[i + 1][0] for i in range(n_students)]
+        _sn_from_sheet = [
+            svp_rows[i + 1][0].strip() for i in range(n_students)
+        ]
         _sn_from_students = [students[i].name for i in range(n_students)]
         assert _sn_from_sheet == _sn_from_students, (
             f"First column of {SheetNames.SUPERVISOR_PREFERENCES} sheet "
@@ -2024,16 +2069,18 @@ class Problem(object):
             el_rows = read_until_empty_row(ws_eligibility)
             # ... index as : el_rows[row_zero_based][column_zero_based]
             # Check project headings
-            assert all(
-                el_rows[0][i + 1] == projects[i].name
-                for i in range(n_projects)
-            ), (
-                f"First row of {SheetNames.ELIGIBILITY} sheet "
-                f"must contain all project names in the same order as in the "
-                f"{SheetNames.PROJECTS} sheet"
-            )
+            for i in range(n_projects):
+                assert el_rows[0][i + 1].strip() == projects[i].name, (
+                    f"First row of {SheetNames.ELIGIBILITY} sheet must "
+                    f"contain all project names in the same order as in the "
+                    f"{SheetNames.PROJECTS} sheet. For project {i + 1}, "
+                    f"project name is {projects[i].name!r}, but column "
+                    f"heading is {el_rows[0][i + 1]!r}."
+                )
             # Check student names
-            _sn_from_sheet = [el_rows[i + 1][0] for i in range(n_students)]
+            _sn_from_sheet = [
+                el_rows[i + 1][0].strip() for i in range(n_students)
+            ]
             _sn_from_students = [students[i].name for i in range(n_students)]  # noqa
             assert _sn_from_sheet == _sn_from_students, (
                 f"First column of {SheetNames.ELIGIBILITY} sheet "
@@ -2059,7 +2106,8 @@ class Problem(object):
                             f"invalid; use one of {TRUE_VALUES} "
                             f"for 'eligible', or one of {FALSE_VALUES} "
                             f"for 'ineligible'. The meaning of "
-                            f"{MISSING_VALUES} is configurable."
+                            f"{MISSING_VALUES} is configurable; see "
+                            f"'--missing_eligibility'."
                         )
                     if (config.student_must_have_choice and
                             not student.explicitly_ranked_project(project)):
@@ -2067,6 +2115,8 @@ class Problem(object):
                     eligibility.set_eligibility(student, project, eligible)
             del ws_eligibility, el_rows, _sn_from_sheet, _sn_from_students
             del pcol, project, eligibility_val, eligible
+
+        wb.close()
 
         # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         # Create and return the Problem object
@@ -2127,7 +2177,7 @@ class Problem(object):
             project_sheet.append([
                 p.name,
                 p.max_n_students,
-                p.supervisor.name
+                p.supervisor_name()
             ])
 
         # ---------------------------------------------------------------------
@@ -2319,7 +2369,7 @@ class Problem(object):
             # See below for explanation.
             project_in_use = [
                 m.add_var(f"project_in_use[p={p}]", var_type=BINARY)
-                if self.projects[p].supervisor.max_n_projects is not None
+                if self.projects[p].at_least_one_supervisor_has_a_project_cap()
                 else None  # don't bother for supervisors that don't care
                 for p in range(n_projects)
             ]  # indexed: p
@@ -2827,12 +2877,15 @@ first row is the title row):
         {SheetNames.PROJECTS}
     Description:
         List of projects (one per row), their student capacity, and their
-        supervisor.
+        supervisor. If a project has multiple supervisors, separate them with
+        commas in the {SheetHeadings.SUPERVISOR!r} column (order is not
+        important).
     Format:
         {SheetHeadings.PROJECT}         {SheetHeadings.MAX_NUMBER_OF_STUDENTS}  {SheetHeadings.SUPERVISOR}
         Project One     1                       Dr Jones
         Project Two     1                       Dr Jones
         Project Three   2                       Dr Smith
+        Project Four    2                       Dr Smith, Dr Jones
         ...             ...                     ...
         
     Sheet name:
@@ -2864,7 +2917,10 @@ first row is the title row):
         {SheetNames.SUPERVISOR_PREFERENCES}
     Description:
         List of projects (one per column) and their supervisor's rank
-        preferences (1 = top, 2 = next, etc.) for students (one per row).
+        preferences (1 = top, 2 = next, etc.) for students (one per row). If
+        a project has multiple supervisors, those supervisors must agree their
+        joint "project preference" (these preferences are project-specific,
+        not supervisor-specific).
     Format:
         <ignored>       Project One     Project Two     Project Three   ...
         Miss Smith      1               1                               ...
@@ -2906,10 +2962,12 @@ first row is the title row):
              "(e.g. 2.5 for joint second/third place)?"
     )
     data_group.add_argument(
-        "--missing_eligibility", type=bool, default=None,
+        "--missing_eligibility", dest="missing_eligibility",
+        type=lambda x: bool(distutils.util.strtobool(x)), default=None,
+        # https://stackoverflow.com/questions/15008758/parsing-boolean-values-with-argparse  # noqa
         help="If an eligibility cell is blank, treat it as eligible (use "
-             "'True') or ineligible (use 'False')? Default, of None, means "
-             "empty cells are invalid."
+             "'True'/'yes'/1 etc.) or ineligible (use 'False'/'no'/0 etc.)? "
+             "Default, of None, means empty cells are invalid."
     )
     data_group.add_argument(
         "--allow_defunct_projects", action="store_true",
