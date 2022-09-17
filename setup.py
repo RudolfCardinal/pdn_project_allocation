@@ -32,7 +32,7 @@ from setuptools import setup, find_packages
 
 setup(
     name='pdn_project_allocation',
-    version='0.0.1',
+    version='0.0.2',
     description='Allocate students to projects',
 
     url='https://github.com/RudolfCardinal/pdn_project_allocation.git',
