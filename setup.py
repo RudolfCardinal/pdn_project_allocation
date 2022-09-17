@@ -64,11 +64,11 @@ setup(
 
     # Requirements:
     install_requires=[
-        'cardinal_pythonlib==1.1.7',
-        'mip==1.13.0',
+        'cardinal_pythonlib==1.1.23',
+        'mip==1.14.1',
         'matching==1.4',
-        'openpyxl==3.0.9',
-        'lxml==4.6.5',  # Will speed up openpyxl export
+        'openpyxl==3.0.10',
+        'lxml==4.9.1',  # Will speed up openpyxl export
     ],
 
     # Launch scripts:

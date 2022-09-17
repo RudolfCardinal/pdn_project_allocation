@@ -36,7 +36,7 @@ from openpyxl.cell import Cell
 from openpyxl.utils import get_column_letter
 from openpyxl.workbook.workbook import Workbook
 from openpyxl.worksheet.worksheet import Worksheet
-from mip import Model
+from mip import Constr, Model, Var
 from mip.exceptions import SolutionNotAvailable
 
 log = logging.getLogger(__name__)
@@ -92,19 +92,19 @@ def report_on_model(m: Model,
     """
     lines = ["Model:", "", "- Variables:", ""]
     try:
-        for v in m.vars:
-            lines.append(f"{v.title} == {v.x}")
+        for v in m.vars:  # type: Var
+            lines.append(f"{v.name} == {v.x}")
     except SolutionNotAvailable:
         if solution_only:
             raise
-        for v in m.vars:
-            lines.append(f"{v.title}")
+        for v in m.vars:  # type: Var
+            lines.append(f"{v.name}")
     if not solution_only:
         lines += ["", "- Objective:", ""]
         lines.append(str(m.objective.sense))
         lines.append(str(m.objective))
         lines += ["", "- Constraints:", ""]
-        for c in m.constrs:
+        for c in m.constrs:  # type: Constr
             lines.append(str(c))
     log.log(loglevel, "\n".join(lines))
 
