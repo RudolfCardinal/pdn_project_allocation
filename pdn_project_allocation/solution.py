@@ -5,7 +5,7 @@ pdn_project_allocation/solution.py
 
 ===============================================================================
 
-    Copyright (C) 2019-2021 Rudolf Cardinal (rudolf@pobox.com).
+    Copyright (C) 2019 Rudolf Cardinal (rudolf@pobox.com).
 
     This file is part of pdn_project_allocation.
 
@@ -64,13 +64,15 @@ log = logging.getLogger(__name__)
 # Solution
 # =============================================================================
 
+
 class Solution(object):
     """
     Represents a potential solution.
     """
-    def __init__(self,
-                 problem: "Problem",
-                 allocation: Dict[Student, Project]) -> None:
+
+    def __init__(
+        self, problem: "Problem", allocation: Dict[Student, Project]
+    ) -> None:
         """
         Args:
             problem:
@@ -96,7 +98,8 @@ class Solution(object):
             lines.append(
                 f"{student.shortname()} -> {project} "
                 f"(student dissatisfaction {std}; "
-                f"supervisor dissatisfaction {svd})")
+                f"supervisor dissatisfaction {svd})"
+            )
         return "\n".join(lines)
 
     def shortdesc(self) -> str:
@@ -104,11 +107,13 @@ class Solution(object):
         Very short description. Ordered by student number.
         """
         students = sorted(self.allocation.keys(), key=lambda s: s.number)
-        parts = [f"{s.number}: {self.allocation[s].number}"
-                 for s in students]
+        parts = [f"{s.number}: {self.allocation[s].number}" for s in students]
         return (
-            "{" + ", ".join(parts) + "}" +
-            f", student dissatisfaction {self.student_dissatisfaction_scores()}"
+            "{"
+            + ", ".join(parts)
+            + "}"
+            + ", student dissatisfaction "
+            + f"{self.student_dissatisfaction_scores()}"
         )
 
     # -------------------------------------------------------------------------
@@ -133,8 +138,9 @@ class Solution(object):
         """
         return self.allocation[student] == project
 
-    def _gen_student_project_pairs(self) -> Generator[Tuple[Student, Project],
-                                                      None, None]:
+    def _gen_student_project_pairs(
+        self,
+    ) -> Generator[Tuple[Student, Project], None, None]:
         """
         Generates ``student, project`` pairs in student order.
         """
@@ -253,9 +259,8 @@ class Solution(object):
     # -------------------------------------------------------------------------
 
     def gen_better_projects(
-            self,
-            student: Student,
-            project: Project) -> Generator[Project, None, None]:
+        self, student: Student, project: Project
+    ) -> Generator[Project, None, None]:
         """
         Generates projects that this student prefers over the specified one.
         """
@@ -263,9 +268,8 @@ class Solution(object):
             yield p
 
     def gen_better_students(
-            self,
-            project: Project,
-            student: Student) -> Generator[Student, None, None]:
+        self, project: Project, student: Student
+    ) -> Generator[Student, None, None]:
         """
         Generates students that this project prefers over the specified one,
         for which they're eligible, AND who are are not already allocated to
@@ -276,7 +280,9 @@ class Solution(object):
             if not self.is_allocated(s, project):
                 yield s
 
-    def stability(self, describe_all_failures: bool = True) -> Tuple[bool, str]:
+    def stability(
+        self, describe_all_failures: bool = True
+    ) -> Tuple[bool, str]:
         """
         Is the solution a stable match, and if not, why not? See README.rst for
         discussion. See also https://gist.github.com/joyrexus/9967709.
@@ -295,8 +301,9 @@ class Solution(object):
                 for alt_proj_student in self.allocated_students(alt_project):
                     if alt_proj_student == student:
                         continue
-                    if student in self.gen_better_students(alt_project,
-                                                           alt_proj_student):
+                    if student in self.gen_better_students(
+                        alt_project, alt_proj_student
+                    ):
                         instability_reasons.append(
                             f"Pairing of student {student} to project "
                             f"{project} is unstable. "
@@ -344,32 +351,40 @@ class Solution(object):
         # Allocations, by student
         # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         ss = wb.create_sheet(SheetNames.STUDENT_ALLOCATIONS)
-        ss.append([
-            "Student",
-            "Project",
-            "Supervisor",
-            "Student's rank of allocated project (dissatisfaction score)",
-        ])
+        ss.append(
+            [
+                "Student",
+                "Project",
+                "Supervisor",
+                "Student's rank of allocated project (dissatisfaction score)",
+            ]
+        )
         for student, project in self._gen_student_project_pairs():
-            ss.append([
-                student.name,
-                project.title,
-                project.supervisor_name(),
-                student.dissatisfaction(project),
-            ])
+            ss.append(
+                [
+                    student.name,
+                    project.title,
+                    project.supervisor_name(),
+                    student.dissatisfaction(project),
+                ]
+            )
         autosize_openpyxl_worksheet_columns(ss)
 
         # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         # Allocations, by project
         # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         ps = wb.create_sheet(SheetNames.PROJECT_ALLOCATIONS)
-        ps.append([
-            "Project",
-            "Supervisor",
-            "Student(s)",
-            "Students' rank(s) of allocated project (dissatisfaction score)",
-            "Project supervisor's rank(s) of allocated student(s) (dissatisfaction score)",  # noqa
-        ])
+        ps.append(
+            [
+                "Project",
+                "Supervisor",
+                "Student(s)",
+                "Students' rank(s) of allocated project"
+                " (dissatisfaction score)",
+                "Project supervisor's rank(s) of allocated student(s)"
+                " (dissatisfaction score)",
+            ]
+        )
         for project in self.problem.sorted_projects():
             student_names = []  # type: List[str]
             supervisor_dissatisfactions = []  # type: List[float]
@@ -382,57 +397,66 @@ class Solution(object):
                 student_dissatisfactions.append(
                     student.dissatisfaction(project)
                 )
-            ps.append([
-                project.title,
-                project.supervisor_name(),
-                ", ".join(student_names),
-                ", ".join(str(x) for x in student_dissatisfactions),
-                ", ".join(str(x) for x in supervisor_dissatisfactions),
-            ])
+            ps.append(
+                [
+                    project.title,
+                    project.supervisor_name(),
+                    ", ".join(student_names),
+                    ", ".join(str(x) for x in student_dissatisfactions),
+                    ", ".join(str(x) for x in supervisor_dissatisfactions),
+                ]
+            )
         autosize_openpyxl_worksheet_columns(ps)
 
         # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         # Popularity of projects
         # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         pp = wb.create_sheet(SheetNames.PROJECT_POPULARITY)
-        pp.append([
-            "Project",
-            "Supervisor",
-            "Total dissatisfaction score from all students",
-            "Allocated student(s)",
-            "Number of students expressing a preference",
-            "Students expressing a preference",
-        ])
+        pp.append(
+            [
+                "Project",
+                "Supervisor",
+                "Total dissatisfaction score from all students",
+                "Allocated student(s)",
+                "Number of students expressing a preference",
+                "Students expressing a preference",
+            ]
+        )
         proj_to_unpop = {}  # type: Dict[Project, float]
         for project in self.problem.projects:
             unpopularity = 0
             for student in self.problem.students:
                 unpopularity += student.dissatisfaction(project)
             proj_to_unpop[project] = unpopularity
-        for project, unpopularity in sorted(proj_to_unpop.items(),
-                                            key=operator.itemgetter(1, 0)):
+        for project, unpopularity in sorted(
+            proj_to_unpop.items(), key=operator.itemgetter(1, 0)
+        ):
             allocated_students = ", ".join(
-                student.name
-                for student in self.allocated_students(project)
+                student.name for student in self.allocated_students(project)
             )
             student_prefs = {}  # type: Dict[Student, float]
             for student in self.problem.students:
                 if student.preferences.actively_expressed_preference_for(
-                        project):
+                    project
+                ):
                     student_prefs[student] = student.preferences.preference(
-                        project)
+                        project
+                    )
             student_details = []  # type: List[str]
-            for student, studpref in sorted(student_prefs.items(),
-                                            key=operator.itemgetter(1, 0)):
+            for student, studpref in sorted(
+                student_prefs.items(), key=operator.itemgetter(1, 0)
+            ):
                 student_details.append(f"{student.name} ({studpref})")
-            pp.append([
-                project.title,
-                project.supervisor_name(),
-                unpopularity,
-                allocated_students,
-                len(student_details),
-                ", ".join(student_details),
-            ])
+            pp.append(
+                [
+                    project.title,
+                    project.supervisor_name(),
+                    unpopularity,
+                    allocated_students,
+                    len(student_details),
+                    ", ".join(student_details),
+                ]
+            )
 
         # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         # Software, settings, and summary information
@@ -445,46 +469,72 @@ class Solution(object):
             ["Software", "pdn_project_allocation"],
             ["Version", VERSION],
             ["Version date", VERSION_DATE],
-            ["Source code",
-             "https://github.com/RudolfCardinal/pdn_project_allocation"],
+            [
+                "Source code",
+                "https://github.com/RudolfCardinal/pdn_project_allocation",
+            ],
             ["Author", "Rudolf Cardinal (rudolf@pobox.com)"],
             [],
             ["RUN INFORMATION"],
             [],
             ["Date/time", datetime.datetime.now()],
-            ["Overall weight given to student preferences",
-             1 - self.problem.config.supervisor_weight],
-            ["Overall weight given to supervisor preferences",
-             self.problem.config.supervisor_weight],
+            [
+                "Overall weight given to student preferences",
+                1 - self.problem.config.supervisor_weight,
+            ],
+            [
+                "Overall weight given to supervisor preferences",
+                self.problem.config.supervisor_weight,
+            ],
             ["Command-line parameters", cmdline_quote(sys.argv)],
             ["Config", str(self.problem.config)],
             [],
             ["SUMMARY STATISTICS"],
             [],
-            ["Student dissatisfaction median",
-             self.student_dissatisfaction_median()],
-            ["Student dissatisfaction mean",
-             self.student_dissatisfaction_mean()],
-            ["Student dissatisfaction variance",
-             self.student_dissatisfaction_variance()],
-            ["Student dissatisfaction minimum",
-             self.student_dissatisfaction_min()],
-            ["Student dissatisfaction minimum",
-             self.student_dissatisfaction_max()],
+            [
+                "Student dissatisfaction median",
+                self.student_dissatisfaction_median(),
+            ],
+            [
+                "Student dissatisfaction mean",
+                self.student_dissatisfaction_mean(),
+            ],
+            [
+                "Student dissatisfaction variance",
+                self.student_dissatisfaction_variance(),
+            ],
+            [
+                "Student dissatisfaction minimum",
+                self.student_dissatisfaction_min(),
+            ],
+            [
+                "Student dissatisfaction minimum",
+                self.student_dissatisfaction_max(),
+            ],
             [],
-            ["Supervisor dissatisfaction (with each student) median",
-             self.supervisor_dissatisfaction_median()],
-            ["Supervisor dissatisfaction (with each student) mean",
-             self.supervisor_dissatisfaction_mean()],
-            ["Supervisor dissatisfaction (with each student) variance",
-             self.supervisor_dissatisfaction_variance()],
-            ["Supervisor dissatisfaction (with each student) minimum",
-             self.supervisor_dissatisfaction_min()],
-            ["Supervisor dissatisfaction (with each student) maximum",
-             self.supervisor_dissatisfaction_max()],
+            [
+                "Supervisor dissatisfaction (with each student) median",
+                self.supervisor_dissatisfaction_median(),
+            ],
+            [
+                "Supervisor dissatisfaction (with each student) mean",
+                self.supervisor_dissatisfaction_mean(),
+            ],
+            [
+                "Supervisor dissatisfaction (with each student) variance",
+                self.supervisor_dissatisfaction_variance(),
+            ],
+            [
+                "Supervisor dissatisfaction (with each student) minimum",
+                self.supervisor_dissatisfaction_min(),
+            ],
+            [
+                "Supervisor dissatisfaction (with each student) maximum",
+                self.supervisor_dissatisfaction_max(),
+            ],
             [],
             ["Stable marriages?", str(is_stable)],
-            ["If unstable, reason:", instability_reason]
+            ["If unstable, reason:", instability_reason],
         ]
         for row in zs_rows:
             zs.append(row)
@@ -509,7 +559,8 @@ class Solution(object):
             self.write_xlsx(filename)
         else:
             raise ValueError(
-                f"Don't know how to write file type {ext!r} for {filename!r}")
+                f"Don't know how to write file type {ext!r} for {filename!r}"
+            )
 
     def write_student_csv(self, filename: str) -> None:
         """
@@ -519,18 +570,23 @@ class Solution(object):
         log.info(f"Writing student allocation data to: {filename}")
         with open(filename, "w") as file:
             writer = csv.writer(file)
-            writer.writerow([
-                "Student number",
-                "Student name",
-                "Project number",
-                "Project name",
-                "Student's rank of allocated project (dissatisfaction score)",
-            ])
+            writer.writerow(
+                [
+                    "Student number",
+                    "Student name",
+                    "Project number",
+                    "Project name",
+                    "Student's rank of allocated project"
+                    " (dissatisfaction score)",
+                ]
+            )
             for student, project in self._gen_student_project_pairs():
-                writer.writerow([
-                    student.number,
-                    student.name,
-                    project.number,
-                    project.title,
-                    student.dissatisfaction(project),
-                ])
+                writer.writerow(
+                    [
+                        student.number,
+                        student.name,
+                        project.number,
+                        project.title,
+                        student.dissatisfaction(project),
+                    ]
+                )

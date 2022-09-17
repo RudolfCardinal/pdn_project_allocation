@@ -5,7 +5,7 @@ setup.py
 
 ===============================================================================
 
-    Copyright (C) 2019-2021 Rudolf Cardinal (rudolf@pobox.com).
+    Copyright (C) 2019 Rudolf Cardinal (rudolf@pobox.com).
 
     This file is part of pdn_project_allocation.
 
@@ -31,52 +31,50 @@ Python package configuration.
 from setuptools import setup, find_packages
 
 setup(
-    name='pdn_project_allocation',
-    version='0.0.2',
-    description='Allocate students to projects',
-
-    url='https://github.com/RudolfCardinal/pdn_project_allocation.git',
-    author='Rudolf Cardinal',
-    author_email='rudolf@pobox.com',
-
-    license='GNU General Public License v3 or later (GPLv3+)',
-
+    name="pdn_project_allocation",
+    version="0.0.2",
+    description="Allocate students to projects",
+    url="https://github.com/RudolfCardinal/pdn_project_allocation.git",
+    author="Rudolf Cardinal",
+    author_email="rudolf@pobox.com",
+    license="GNU General Public License v3 or later (GPLv3+)",
     # See https://pypi.org/classifiers/
     classifiers=[
-        'Development Status :: 4 - Beta',
-        'Intended Audience :: Education',
-        'License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)',  # noqa
-        'Natural Language :: English',
-        'Operating System :: OS Independent',
-        'Programming Language :: Python :: 3',
-        'Programming Language :: Python :: 3.6',
-        'Topic :: Education'
+        "Development Status :: 4 - Beta",
+        "Intended Audience :: Education",
+        "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",  # noqa
+        "Natural Language :: English",
+        "Operating System :: OS Independent",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3.6",
+        "Topic :: Education",
     ],
-
     # Python code:
     packages=find_packages(),
-
     # Static files:
     # https://stackoverflow.com/questions/11848030/how-include-static-files-to-setuptools-python-package
     package_data={
-        'pdn_project_allocation.testdata': ['*'],
+        "pdn_project_allocation.testdata": ["*"],
     },
-
     # Requirements:
     install_requires=[
-        'cardinal_pythonlib==1.1.23',
-        'mip==1.14.1',
-        'matching==1.4',
-        'openpyxl==3.0.10',
-        'lxml==4.9.1',  # Will speed up openpyxl export
+        "cardinal_pythonlib==1.1.23",
+        "mip==1.14.1",
+        "matching==1.4",
+        "openpyxl==3.0.10",
+        "lxml==4.9.1",  # Will speed up openpyxl export
+        # -------------------------------------------------------------------------
+        # For development:
+        # -------------------------------------------------------------------------
+        "black==22.3.0",  # auto code formatter
+        "flake8==3.8.3",  # code checks
     ],
-
     # Launch scripts:
     entry_points={
-        'console_scripts': [
+        "console_scripts": [
             # Format is 'script=module:function".
-            'pdn_project_allocation=pdn_project_allocation.main:main',
-            'pdn_project_allocation_run_tests=pdn_project_allocation.run_tests:main',  # noqa
+            "pdn_project_allocation=pdn_project_allocation.main:main",
+            "pdn_project_allocation_run_tests=pdn_project_allocation.run_tests:main",  # noqa
             # noqa
         ],
     },

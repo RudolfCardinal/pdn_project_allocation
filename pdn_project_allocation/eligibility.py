@@ -5,7 +5,7 @@ pdn_project_allocation/eligibility.py
 
 ===============================================================================
 
-    Copyright (C) 2019-2021 Rudolf Cardinal (rudolf@pobox.com).
+    Copyright (C) 2019 Rudolf Cardinal (rudolf@pobox.com).
 
     This file is part of pdn_project_allocation.
 
@@ -42,16 +42,19 @@ log = logging.getLogger(__name__)
 # Eligibility helpers
 # =============================================================================
 
+
 class Eligibility(object):
     """
     Simple wrapper around a map between students and projects.
     """
 
-    def __init__(self,
-                 students: List[Student],
-                 projects: List[Project],
-                 default_eligibility: bool = True,
-                 allow_defunct_projects: bool = False) -> None:
+    def __init__(
+        self,
+        students: List[Student],
+        projects: List[Project],
+        default_eligibility: bool = True,
+        allow_defunct_projects: bool = False,
+    ) -> None:
         """
         Default constructor, which just sets default eligibility for everyone.
 
@@ -68,13 +71,7 @@ class Eligibility(object):
         self.students = sorted(students, key=lambda s: s.number)
         self.projects = sorted(projects, key=lambda p: p.number)
         self.eligibility = OrderedDict(
-            (
-                s,
-                OrderedDict(
-                    (p, default_eligibility)
-                    for p in projects
-                )
-            )
+            (s, OrderedDict((p, default_eligibility) for p in projects))
             for s in students
         )
         self.allow_defunct_projects = allow_defunct_projects
@@ -87,11 +84,7 @@ class Eligibility(object):
             return "All students eligible for all projects."
         lines = []  # type: List[str]
         for s, p_e in self.eligibility.items():
-            projects_str = ", ".join(
-                str(p)
-                for p, e in p_e.items()
-                if e
-            )
+            projects_str = ", ".join(str(p) for p, e in p_e.items() if e)
             lines.append(f"{s}: eligible for {projects_str}")
         return "\n".join(lines)
 
@@ -101,9 +94,9 @@ class Eligibility(object):
         """
         # 1. Every student has an eligible project.
         for s in self.students:
-            assert any(self.is_eligible(s, p) for p in self.projects), (
-                f"Error: student {s} is not eligible for any projects!"
-            )
+            assert any(
+                self.is_eligible(s, p) for p in self.projects
+            ), f"Error: student {s} is not eligible for any projects!"
         # 2. Every project has an eligible student.
         for p in self.projects:
             if not any(self.is_eligible(s, p) for s in self.students):
@@ -113,12 +106,12 @@ class Eligibility(object):
                 else:
                     raise AssertionError(
                         msg + " [If you meant this, set the "
-                              "--allow_defunct_projects option.]")
+                        "--allow_defunct_projects option.]"
+                    )
 
-    def set_eligibility(self,
-                        student: Student,
-                        project: Project,
-                        eligible: bool):
+    def set_eligibility(
+        self, student: Student, project: Project, eligible: bool
+    ):
         """
         Set eligibility for a specific student/project combination.
 
@@ -140,7 +133,5 @@ class Eligibility(object):
         Is this a simple problem in which everyone is eligible for everything?
         """
         return all(
-            e
-            for p_e in self.eligibility.values()
-            for e in p_e.values()
+            e for p_e in self.eligibility.values() for e in p_e.values()
         )

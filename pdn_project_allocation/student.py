@@ -5,7 +5,7 @@ pdn_project_allocation/student.py
 
 ===============================================================================
 
-    Copyright (C) 2019-2021 Rudolf Cardinal (rudolf@pobox.com).
+    Copyright (C) 2019 Rudolf Cardinal (rudolf@pobox.com).
 
     This file is part of pdn_project_allocation.
 
@@ -43,17 +43,21 @@ if TYPE_CHECKING:
 # Student
 # =============================================================================
 
+
 class Student(object):
     """
     Represents a single student, with their preferences.
     """
-    def __init__(self,
-                 name: str,
-                 number: int,
-                 preferences: Dict["Project", int],
-                 n_projects: int,
-                 allow_ties: bool = False,
-                 preference_power: float = DEFAULT_PREFERENCE_POWER) -> None:
+
+    def __init__(
+        self,
+        name: str,
+        number: int,
+        preferences: Dict["Project", int],
+        n_projects: int,
+        allow_ties: bool = False,
+        preference_power: float = DEFAULT_PREFERENCE_POWER,
+    ) -> None:
         """
         Args:
             name:
@@ -77,7 +81,7 @@ class Student(object):
             preferences=preferences,
             owner=self,
             allow_ties=allow_ties,
-            preference_power=preference_power
+            preference_power=preference_power,
         )
 
     def __str__(self) -> str:
@@ -127,7 +131,8 @@ class Student(object):
         return self.preferences.actively_expressed_preference_for(project)
 
     def projects_in_descending_order(
-            self, all_projects: List["Project"]) -> List["Project"]:
+        self, all_projects: List["Project"]
+    ) -> List["Project"]:
         """
         Returns projects in descending order of preference.
         """

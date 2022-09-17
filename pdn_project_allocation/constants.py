@@ -5,7 +5,7 @@ pdn_project_allocation/constants.py
 
 ===============================================================================
 
-    Copyright (C) 2019-2021 Rudolf Cardinal (rudolf@pobox.com).
+    Copyright (C) 2019 Rudolf Cardinal (rudolf@pobox.com).
 
     This file is part of pdn_project_allocation.
 
@@ -62,10 +62,12 @@ MISSING_VALUES = ["", None]
 # Enum classes
 # =============================================================================
 
+
 class SheetNames(object):
     """
     Sheet names within the input/output spreadsheet file.
     """
+
     ELIGIBILITY = "Eligibility"
     INFORMATION = "Information"  # output
     PROJECT_POPULARITY = "Project_popularity"  # output
@@ -81,6 +83,7 @@ class SheetHeadings(object):
     """
     Column headings within the input spreadsheet.
     """
+
     MAX_NUMBER_OF_PROJECTS = "Max_number_of_projects"
     MAX_NUMBER_OF_STUDENTS = "Max_number_of_students"
     PROJECT = "Project"
@@ -89,7 +92,7 @@ class SheetHeadings(object):
 
 class OptimizeMethod(Enum, metaclass=CaseInsensitiveEnumMeta):
     MINIMIZE_DISSATISFACTION = (
-        'Minimize weighted dissatisfaction '
+        "Minimize weighted dissatisfaction "
         '(not necessarily requiring stable "marriages")'
     )
     MINIMIZE_DISSATISFACTION_STABLE_AB1996 = (

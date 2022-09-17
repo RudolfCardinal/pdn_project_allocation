@@ -5,7 +5,7 @@ pdn_project_allocation/preferences.py
 
 ===============================================================================
 
-    Copyright (C) 2019-2021 Rudolf Cardinal (rudolf@pobox.com).
+    Copyright (C) 2019 Rudolf Cardinal (rudolf@pobox.com).
 
     This file is part of pdn_project_allocation.
 
@@ -33,7 +33,6 @@ import logging
 import operator
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-from cardinal_pythonlib.argparse_func import RawDescriptionArgumentDefaultsHelpFormatter  # noqa
 from cardinal_pythonlib.maths_py import sum_of_integers_in_inclusive_range
 
 from pdn_project_allocation.constants import DEFAULT_PREFERENCE_POWER
@@ -45,17 +44,21 @@ log = logging.getLogger(__name__)
 # Preferences
 # =============================================================================
 
+
 class Preferences(object):
     """
     Represents preference as a mapping from arbitrary objects (being preferred)
     to ranks.
     """
-    def __init__(self,
-                 n_options: int,
-                 preferences: Dict[Any, Union[int, float]] = None,
-                 owner: Any = None,
-                 allow_ties: bool = False,
-                 preference_power: float = DEFAULT_PREFERENCE_POWER) -> None:
+
+    def __init__(
+        self,
+        n_options: int,
+        preferences: Dict[Any, Union[int, float]] = None,
+        owner: Any = None,
+        allow_ties: bool = False,
+        preference_power: float = DEFAULT_PREFERENCE_POWER,
+    ) -> None:
         """
         Args:
             n_options:
@@ -84,7 +87,8 @@ class Preferences(object):
         self._preferences = OrderedDict()  # type: Dict[Any, Union[int, float]]
         self._owner = owner
         self._total_dissatisfaction = sum_of_integers_in_inclusive_range(
-            1, n_options)
+            1, n_options
+        )
         self._allocated_dissatisfaction = 0
         self._allow_ties = allow_ties
         self._preference_power = preference_power
@@ -107,9 +111,13 @@ class Preferences(object):
         )
 
     def __repr__(self) -> str:
-        return "{" + ", ".join(
-            f"{str(k)}: {str(v)}" for k, v in self._preferences.items()
-        ) + "}"
+        return (
+            "{"
+            + ", ".join(
+                f"{str(k)}: {str(v)}" for k, v in self._preferences.items()
+            )
+            + "}"
+        )
 
     def set_n_options(self, n_options: int) -> None:
         """
@@ -169,7 +177,8 @@ class Preferences(object):
             )
         n_expressed = len(self._preferences)
         expected_allocation = sum_of_integers_in_inclusive_range(
-            1, n_expressed)
+            1, n_expressed
+        )
         assert self._allocated_dissatisfaction == expected_allocation, (
             f"For preferences expressed by {self._owner!r}, dissatisfaction "
             f"scores add up to {self._allocated_dissatisfaction}, but must "
@@ -204,7 +213,8 @@ class Preferences(object):
         n_unranked = self._n_options - len(self._preferences)
         return (
             self._unallocated_dissatisfaction / n_unranked
-            if n_unranked > 0 else None
+            if n_unranked > 0
+            else None
         )
 
     def preference(self, item: Any) -> Union[int, float]:
@@ -254,8 +264,7 @@ class Preferences(object):
         """
         return list(self._preferences.keys())
 
-    def items_descending_order(
-            self, all_items: List[Any]) -> List[Any]:
+    def items_descending_order(self, all_items: List[Any]) -> List[Any]:
         """
         Returns all the items provided, in descending preference order (or the
         order provided, as a tie-break).

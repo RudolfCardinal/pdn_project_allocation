@@ -5,7 +5,7 @@ pdn_project_allocation/main.py
 
 ===============================================================================
 
-    Copyright (C) 2019-2021 Rudolf Cardinal (rudolf@pobox.com).
+    Copyright (C) 2019 Rudolf Cardinal (rudolf@pobox.com).
 
     This file is part of pdn_project_allocation.
 
@@ -35,7 +35,9 @@ import random
 import sys
 import traceback
 
-from cardinal_pythonlib.argparse_func import RawDescriptionArgumentDefaultsHelpFormatter  # noqa
+from cardinal_pythonlib.argparse_func import (
+    RawDescriptionArgumentDefaultsHelpFormatter,
+)
 from cardinal_pythonlib.enumlike import keys_descriptions_from_enum
 from cardinal_pythonlib.logs import main_only_quicksetup_rootlogger
 from cardinal_pythonlib.cmdline import cmdline_quote
@@ -65,6 +67,7 @@ log = logging.getLogger(__name__)
 # =============================================================================
 # main
 # =============================================================================
+
 
 def main() -> None:
     """
@@ -145,106 +148,128 @@ first row is the title row):
         Mr Jones        2               2                               ...
         ...             ...             ...
 
-"""  # noqa
+""",  # noqa
     )
-    parser.add_argument(
-        "--verbose", action="store_true",
-        help="Be verbose"
-    )
+    parser.add_argument("--verbose", action="store_true", help="Be verbose")
 
     file_group = parser.add_argument_group("Files")
     file_group.add_argument(
-        "filename", type=str,
+        "filename",
+        type=str,
         help="Spreadsheet filename to read. "
-             "Input file types supported: " + str(INPUT_TYPES_SUPPORTED)
+        "Input file types supported: " + str(INPUT_TYPES_SUPPORTED),
     )
     file_group.add_argument(
-        "--output", type=str,
+        "--output",
+        type=str,
         help="Optional filename to write output to. "
-             "Output types supported: " + str(OUTPUT_TYPES_SUPPORTED)
+        "Output types supported: " + str(OUTPUT_TYPES_SUPPORTED),
     )
     file_group.add_argument(
-        "--output_student_csv", type=str,
-        help="Optional filename to write student CSV output to."
+        "--output_student_csv",
+        type=str,
+        help="Optional filename to write student CSV output to.",
     )
 
     data_group = parser.add_argument_group("Data")
     data_group.add_argument(
-        "--allow_student_preference_ties", action="store_true",
+        "--allow_student_preference_ties",
+        action="store_true",
         help="Allow students to express tied preferences "
-             "(e.g. 2.5 for joint second/third place)?"
+        "(e.g. 2.5 for joint second/third place)?",
     )
     data_group.add_argument(
-        "--allow_supervisor_preference_ties", action="store_true",
+        "--allow_supervisor_preference_ties",
+        action="store_true",
         help="Allow supervisors to express tied preferences "
-             "(e.g. 2.5 for joint second/third place)?"
+        "(e.g. 2.5 for joint second/third place)?",
     )
     data_group.add_argument(
-        "--missing_eligibility", dest="missing_eligibility",
-        type=lambda x: bool(distutils.util.strtobool(x)), default=None,
+        "--missing_eligibility",
+        dest="missing_eligibility",
+        type=lambda x: bool(distutils.util.strtobool(x)),
+        default=None,
         # https://stackoverflow.com/questions/15008758/parsing-boolean-values-with-argparse  # noqa
         help="If an eligibility cell is blank, treat it as eligible (use "
-             "'True'/'yes'/1 etc.) or ineligible (use 'False'/'no'/0 etc.)? "
-             "Default, of None, means empty cells are invalid."
+        "'True'/'yes'/1 etc.) or ineligible (use 'False'/'no'/0 etc.)? "
+        "Default, of None, means empty cells are invalid.",
     )
     data_group.add_argument(
-        "--allow_defunct_projects", action="store_true",
+        "--allow_defunct_projects",
+        action="store_true",
         help="Allow projects that say that all students are ineligible (e.g. "
-             "because they've been pre-allocated by different process)?"
+        "because they've been pre-allocated by different process)?",
     )
 
     method_group = parser.add_argument_group("Method")
     method_group.add_argument(
-        "--supervisor_weight", type=float, default=DEFAULT_SUPERVISOR_WEIGHT,
+        "--supervisor_weight",
+        type=float,
+        default=DEFAULT_SUPERVISOR_WEIGHT,
         help="Weight allocated to supervisor preferences (student preferences "
-             "are weighted as [1 minus this])"
+        "are weighted as [1 minus this])",
     )
     method_group.add_argument(
-        "--preference_power", type=float, default=DEFAULT_PREFERENCE_POWER,
-        help="Power (exponent) to raise preferences by."
+        "--preference_power",
+        type=float,
+        default=DEFAULT_PREFERENCE_POWER,
+        help="Power (exponent) to raise preferences by.",
     )
     method_group.add_argument(
-        "--student_must_have_choice", action="store_true",
+        "--student_must_have_choice",
+        action="store_true",
         help="Prevent students being allocated to projects they've not "
-             "explicitly ranked?"
+        "explicitly ranked?",
     )
 
     technical_group = parser.add_argument_group("Technicalities")
     technical_group.add_argument(
-        "--maxtime", type=float, default=DEFAULT_MAX_SECONDS,
-        help="Maximum time (in seconds) to run MIP optimizer for"
+        "--maxtime",
+        type=float,
+        default=DEFAULT_MAX_SECONDS,
+        help="Maximum time (in seconds) to run MIP optimizer for",
     )
     technical_group.add_argument(
-        "--seed", type=int, default=None,
+        "--seed",
+        type=int,
+        default=None,
         help="Seed for random number generator. "
-             "DO NOT USE FOR ACTUAL ALLOCATIONS; IT IS UNFAIR (because it "
-             "tempts the operator to re-run with different seeds). "
-             "FOR DEBUGGING USE ONLY."
+        "DO NOT USE FOR ACTUAL ALLOCATIONS; IT IS UNFAIR (because it "
+        "tempts the operator to re-run with different seeds). "
+        "FOR DEBUGGING USE ONLY.",
     )
     technical_group.add_argument(
-        "--no_shuffle", action="store_true",
-        help="Don't shuffle anything. FOR DEBUGGING USE ONLY."
+        "--no_shuffle",
+        action="store_true",
+        help="Don't shuffle anything. FOR DEBUGGING USE ONLY.",
     )
     technical_group.add_argument(
-        "--debug_model", action="store_true",
-        help="Report the details of the MIP model before solving."
+        "--debug_model",
+        action="store_true",
+        help="Report the details of the MIP model before solving.",
     )
     method_k, method_desc = keys_descriptions_from_enum(
-        OptimizeMethod, keys_to_lower=True)
+        OptimizeMethod, keys_to_lower=True
+    )
     method_group.add_argument(
-        "--method", type=str, choices=method_k,
+        "--method",
+        type=str,
+        choices=method_k,
         default=DEFAULT_METHOD.name,
-        help=f"Method of solving. -- {method_desc} --"
+        help=f"Method of solving. -- {method_desc} --",
     )
 
     args = parser.parse_args()
-    main_only_quicksetup_rootlogger(level=logging.DEBUG if args.verbose
-                                    else logging.INFO)
+    main_only_quicksetup_rootlogger(
+        level=logging.DEBUG if args.verbose else logging.INFO
+    )
 
     # Seed RNG
     if args.seed is not None:
-        log.warning("You have specified --seed. FOR DEBUGGING USE ONLY: "
-                    "THIS IS NOT FAIR FOR REAL ALLOCATIONS!")
+        log.warning(
+            "You have specified --seed. FOR DEBUGGING USE ONLY: "
+            "THIS IS NOT FAIR FOR REAL ALLOCATIONS!"
+        )
         seed = args.seed
     else:
         seed = RNG_SEED
@@ -283,7 +308,8 @@ first row is the title row):
             solution.write_data(args.output)
         else:
             log.warning(
-                "Output not saved. Specify the --output option for that.")
+                "Output not saved. Specify the --output option for that."
+            )
         if args.output_student_csv:
             solution.write_student_csv(args.output_student_csv)
         sys.exit(EXIT_SUCCESS)

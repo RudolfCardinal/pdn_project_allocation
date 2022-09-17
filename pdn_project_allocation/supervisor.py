@@ -5,7 +5,7 @@ pdn_project_allocation/supervisor.py
 
 ===============================================================================
 
-    Copyright (C) 2019-2021 Rudolf Cardinal (rudolf@pobox.com).
+    Copyright (C) 2019 Rudolf Cardinal (rudolf@pobox.com).
 
     This file is part of pdn_project_allocation.
 
@@ -35,15 +35,19 @@ from cardinal_pythonlib.reprfunc import auto_repr
 # Supervisor
 # =============================================================================
 
+
 class Supervisor(object):
     """
     Simple representation of a supervisor.
     """
-    def __init__(self,
-                 name: str,
-                 number: int,
-                 max_n_projects: int = None,
-                 max_n_students: int = None) -> None:
+
+    def __init__(
+        self,
+        name: str,
+        number: int,
+        max_n_projects: int = None,
+        max_n_students: int = None,
+    ) -> None:
         """
         Args:
             name:

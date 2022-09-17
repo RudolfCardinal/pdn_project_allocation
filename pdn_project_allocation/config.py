@@ -5,7 +5,7 @@ pdn_project_allocation/config.py
 
 ===============================================================================
 
-    Copyright (C) 2019-2021 Rudolf Cardinal (rudolf@pobox.com).
+    Copyright (C) 2019 Rudolf Cardinal (rudolf@pobox.com).
 
     This file is part of pdn_project_allocation.
 
@@ -43,26 +43,28 @@ from pdn_project_allocation.constants import (
 # Master config
 # =============================================================================
 
+
 class Config(object):
     """
     Master config object.
     """
 
     def __init__(
-            self,
-            filename: str,
-            allow_defunct_projects: bool = False,
-            allow_student_preference_ties: bool = False,
-            allow_supervisor_preference_ties: bool = False,
-            cmd_args: Dict[str, Any] = None,
-            debug_model: bool = False,
-            max_time_s: float = DEFAULT_MAX_SECONDS,
-            missing_eligibility: bool = None,
-            no_shuffle: bool = False,
-            optimize_method: OptimizeMethod = DEFAULT_METHOD,
-            preference_power: float = DEFAULT_PREFERENCE_POWER,
-            student_must_have_choice: bool = False,
-            supervisor_weight: float = DEFAULT_SUPERVISOR_WEIGHT) -> None:
+        self,
+        filename: str,
+        allow_defunct_projects: bool = False,
+        allow_student_preference_ties: bool = False,
+        allow_supervisor_preference_ties: bool = False,
+        cmd_args: Dict[str, Any] = None,
+        debug_model: bool = False,
+        max_time_s: float = DEFAULT_MAX_SECONDS,
+        missing_eligibility: bool = None,
+        no_shuffle: bool = False,
+        optimize_method: OptimizeMethod = DEFAULT_METHOD,
+        preference_power: float = DEFAULT_PREFERENCE_POWER,
+        student_must_have_choice: bool = False,
+        supervisor_weight: float = DEFAULT_SUPERVISOR_WEIGHT,
+    ) -> None:
         """
         Reads a file, autodetecting its format, and returning the
         :class:`Problem`.
@@ -104,7 +106,9 @@ class Config(object):
 
         self.allow_defunct_projects = allow_defunct_projects
         self.allow_student_preference_ties = allow_student_preference_ties
-        self.allow_supervisor_preference_ties = allow_supervisor_preference_ties  # noqa
+        self.allow_supervisor_preference_ties = (
+            allow_supervisor_preference_ties  # noqa
+        )
         self.debug_model = debug_model
         self.max_time_s = max_time_s
         self.missing_eligibility = missing_eligibility
@@ -118,5 +122,3 @@ class Config(object):
 
     def __str__(self) -> str:
         return str(self.cmd_args)
-
-

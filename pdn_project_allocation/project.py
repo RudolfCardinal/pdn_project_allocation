@@ -5,7 +5,7 @@ pdn_project_allocation/project.py
 
 ===============================================================================
 
-    Copyright (C) 2019-2021 Rudolf Cardinal (rudolf@pobox.com).
+    Copyright (C) 2019 Rudolf Cardinal (rudolf@pobox.com).
 
     This file is part of pdn_project_allocation.
 
@@ -46,16 +46,20 @@ log = logging.getLogger(__name__)
 # Project
 # =============================================================================
 
+
 class Project(object):
     """
     Simple representation of a project.
     """
-    def __init__(self,
-                 title: str,
-                 number: int,
-                 supervisors: List[Supervisor],
-                 max_n_students: int,
-                 allow_defunct_projects: bool = False) -> None:
+
+    def __init__(
+        self,
+        title: str,
+        number: int,
+        supervisors: List[Supervisor],
+        max_n_students: int,
+        allow_defunct_projects: bool = False,
+    ) -> None:
         """
         Args:
             title:
@@ -109,11 +113,12 @@ class Project(object):
         )
 
     def set_supervisor_preferences(
-            self,
-            n_students: int,
-            preferences: Dict[Student, int],
-            allow_ties: bool = False,
-            preference_power: float = DEFAULT_PREFERENCE_POWER) -> None:
+        self,
+        n_students: int,
+        preferences: Dict[Student, int],
+        allow_ties: bool = False,
+        preference_power: float = DEFAULT_PREFERENCE_POWER,
+    ) -> None:
         """
         Sets the supervisor's preferences about students for a project.
         """
@@ -122,7 +127,7 @@ class Project(object):
             owner=self,
             preferences=preferences,
             allow_ties=allow_ties,
-            preference_power=preference_power
+            preference_power=preference_power,
         )
 
     def dissatisfaction(self, student: Student) -> float:
@@ -139,7 +144,8 @@ class Project(object):
         return self.supervisor_preferences.exponentiated_preference(project)
 
     def students_in_descending_order(
-            self, all_students: List[Student]) -> List[Student]:
+        self, all_students: List[Student]
+    ) -> List[Student]:
         """
         Returns students in descending order of preference.
         """
@@ -163,7 +169,4 @@ class Project(object):
         Does at least one supervisor of this project? have a cap on the number
         of projects they can take?
         """
-        return any(
-            s.max_n_projects is not None
-            for s in self.supervisors
-        )
+        return any(s.max_n_projects is not None for s in self.supervisors)

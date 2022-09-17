@@ -5,7 +5,7 @@ pdn_project_allocation/helperfunc.py
 
 ===============================================================================
 
-    Copyright (C) 2019-2021 Rudolf Cardinal (rudolf@pobox.com).
+    Copyright (C) 2019 Rudolf Cardinal (rudolf@pobox.com).
 
     This file is part of pdn_project_allocation.
 
@@ -46,6 +46,7 @@ log = logging.getLogger(__name__)
 # Helper functions
 # =============================================================================
 
+
 def mismatch(actual: List[Any], expected: List[Any]) -> str:
     """
     Provides text to locate a mismatch between two lists.
@@ -84,9 +85,9 @@ def read_until_empty_row(ws: Worksheet) -> List[List[Any]]:
     return rows
 
 
-def report_on_model(m: Model,
-                    loglevel: int = logging.WARNING,
-                    solution_only: bool = False) -> None:
+def report_on_model(
+    m: Model, loglevel: int = logging.WARNING, solution_only: bool = False
+) -> None:
     """
     Shows detail of a MIP model to the log.
     """
@@ -143,7 +144,7 @@ def autosize_openpyxl_column(ws: Worksheet, col_number: int) -> None:
 def autosize_openpyxl_worksheet_columns(ws: Worksheet) -> None:
     """
     Automatically resize column sizes to their contents. See
-    
+
     - https://stackoverflow.com/questions/13197574/openpyxl-adjust-column-width-size
     - https://stackoverflow.com/questions/60248319/how-to-set-column-width-to-bestfit-in-openpyxl
     """  # noqa
@@ -157,7 +158,8 @@ def autosize_openpyxl_worksheet_columns(ws: Worksheet) -> None:
                 text = str(cell.value)
                 text_width = len(text)  # the poor approximation
                 dims[cell.column_letter] = max(
-                    dims.get(cell.column_letter, 0), text_width)
+                    dims.get(cell.column_letter, 0), text_width
+                )
     for col, value in dims.items():
         ws.column_dimensions[col].width = value
 
