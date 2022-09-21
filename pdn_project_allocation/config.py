@@ -34,7 +34,9 @@ from pdn_project_allocation.constants import (
     DEFAULT_MAX_SECONDS,
     DEFAULT_METHOD,
     DEFAULT_PREFERENCE_POWER,
+    DEFAULT_RANK_NOTATION,
     DEFAULT_SUPERVISOR_WEIGHT,
+    RankNotation,
     OptimizeMethod,
 )
 
@@ -62,6 +64,7 @@ class Config(object):
         no_shuffle: bool = False,
         optimize_method: OptimizeMethod = DEFAULT_METHOD,
         preference_power: float = DEFAULT_PREFERENCE_POWER,
+        input_rank_notation: RankNotation = DEFAULT_RANK_NOTATION,
         student_must_have_choice: bool = False,
         supervisor_weight: float = DEFAULT_SUPERVISOR_WEIGHT,
     ) -> None:
@@ -95,6 +98,8 @@ class Config(object):
                 Method to use for optimizing.
             preference_power:
                 Power (exponent) to raise preferences to.
+            input_rank_notation:
+                Notation for input ranks (see RankNotation).
             student_must_have_choice:
                 Prevent students being allocated to projects they've not
                 explicitly ranked?
@@ -115,6 +120,7 @@ class Config(object):
         self.no_shuffle = no_shuffle
         self.optimize_method = optimize_method
         self.preference_power = preference_power
+        self.input_rank_notation = input_rank_notation
         self.student_must_have_choice = student_must_have_choice
         self.supervisor_weight = supervisor_weight
 

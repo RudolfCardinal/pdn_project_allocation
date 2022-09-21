@@ -37,8 +37,8 @@ from cardinal_pythonlib.enumlike import CaseInsensitiveEnumMeta
 # Constants
 # =============================================================================
 
-VERSION = "1.4.0"
-VERSION_DATE = "2021-10-03"
+VERSION = "1.5.0"
+VERSION_DATE = "2022-09-21"
 
 DEFAULT_PREFERENCE_POWER = 1.0
 DEFAULT_MAX_SECONDS = 1e100  # the default in mip
@@ -90,6 +90,17 @@ class SheetHeadings(object):
     SUPERVISOR = "Supervisor"
 
 
+class RankNotation(Enum, metaclass=CaseInsensitiveEnumMeta):
+    """
+    Ways of expressing ranks, and in particular ways of expressing tied ranks.
+    See https://en.wikipedia.org/wiki/Ranking#Ranking_in_statistics.
+    """
+
+    FRACTIONAL = "Fractional ranks (sum unaltered by ties; e.g. 1.5, 1.5, 3)"
+    COMPETITION = "Standard competition ranks (e.g. 1, 1, 3)"
+    DENSE = "Dense ranks (e.g. 1, 1, 2)"
+
+
 class OptimizeMethod(Enum, metaclass=CaseInsensitiveEnumMeta):
     MINIMIZE_DISSATISFACTION = (
         "Minimize weighted dissatisfaction "
@@ -108,7 +119,7 @@ class OptimizeMethod(Enum, metaclass=CaseInsensitiveEnumMeta):
         "via Abeledo & Blum (1996) falling back to custom method if required"
     )
     MINIMIZE_DISSATISFACTION_STABLE_FALLBACK = (
-        "Minimize weighted dissatisfaction, requiring stability if possible"
+        "Minimize weighted dissatisfaction, requiring stability if possible "
         "(as for MINIMIZE_DISSATISFACTION_STABLE), but falling back to "
         "unstable if not."
     )
@@ -119,3 +130,4 @@ class OptimizeMethod(Enum, metaclass=CaseInsensitiveEnumMeta):
 
 
 DEFAULT_METHOD = OptimizeMethod.MINIMIZE_DISSATISFACTION_STABLE_FALLBACK
+DEFAULT_RANK_NOTATION = RankNotation.FRACTIONAL

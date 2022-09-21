@@ -33,7 +33,17 @@ from itertools import product
 import logging
 import os
 import random
-from typing import Dict, Generator, List, Optional, Sequence, Set, Tuple
+from typing import (
+    Any,
+    Dict,
+    Generator,
+    List,
+    Optional,
+    Sequence,
+    Set,
+    Tuple,
+    Union,
+)
 
 from openpyxl.reader.excel import load_workbook
 from openpyxl.workbook.workbook import Workbook
@@ -314,6 +324,20 @@ class Problem(object):
         """
         Reads a :class:`Problem` from an Excel XLSX file.
         """
+
+        def get_pref_val(x_: Any) -> Union[int, float, None]:
+            """
+            Raises ValueError if it's not a preference quantity.
+            """
+            if x_ is None:
+                return None
+            if isinstance(x_, str) and not x_.strip():
+                # Empty string or string containing spaces.
+                return None
+            if isinstance(x_, (int, float)):
+                return x_
+            raise ValueError(f"Bad preference: {x_!r}")
+
         log.info(f"Reading XLSX file: {config.filename}")
         wb = load_workbook(
             config.filename,
@@ -356,12 +380,12 @@ class Problem(object):
             )
             max_n_projects = row[1]
             assert max_n_projects is None or isinstance(max_n_projects, int), (
-                f"Max max_n_projects in {SheetNames.SUPERVISORS} "
+                f"Bad max_n_projects in {SheetNames.SUPERVISORS} "
                 f"row {row_number}; is {max_n_projects!r}"
             )
             max_n_students = row[2]
             assert max_n_students is None or isinstance(max_n_students, int), (
-                f"Max max_n_students in {SheetNames.SUPERVISORS} "
+                f"Bad max_n_students in {SheetNames.SUPERVISORS} "
                 f"row {row_number}; is {max_n_students!r}"
             )
             new_supervisor = Supervisor(
@@ -475,16 +499,21 @@ class Problem(object):
                 f"row {row_number}: {student_name!r}"
             )
             student_preferences = OrderedDict()  # type: Dict[Project, int]
-            for project_number, pref in enumerate(row[1:], start=1):
-                if config.allow_student_preference_ties:
-                    ok = pref is None or isinstance(pref, float)
-                else:
-                    ok = pref is None or isinstance(pref, int)
-                assert ok, (
-                    f"Bad preference for student {student_name} in "
-                    f"{SheetNames.STUDENT_PREFERENCES} "
-                    f"row {row_number}: {pref!r}"
-                )
+            for project_number, pref_contents in enumerate(row[1:], start=1):
+                try:
+                    pref = get_pref_val(pref_contents)  # may raise
+                    if config.allow_student_preference_ties:
+                        ok = pref is None or isinstance(pref, float)
+                    else:
+                        ok = pref is None or isinstance(pref, int)
+                    if not ok:
+                        raise ValueError
+                except ValueError:
+                    raise ValueError(
+                        f"Bad preference for student {student_name} in "
+                        f"{SheetNames.STUDENT_PREFERENCES} "
+                        f"row {row_number}: {pref_contents!r}"
+                    )
                 project = projects[project_number - 1]
                 student_preferences[project] = pref
             student_names.append(student_name)
@@ -495,10 +524,12 @@ class Problem(object):
                 n_projects=n_projects,
                 allow_ties=config.allow_student_preference_ties,
                 preference_power=config.preference_power,
+                input_rank_notation=config.input_rank_notation,
             )
             students.append(new_student)
         del ws_students, stp_rows, row_number, row, student_name, student_names
-        del student_preferences, project_number, pref, ok, project, new_student
+        del student_preferences, project_number, pref_contents, pref
+        del ok, project, new_student
         n_students = len(students)
         log.info(f"Number of students: {n_students}")
         assert n_students >= 1
@@ -555,13 +586,14 @@ class Problem(object):
         for pcol, project in enumerate(projects, start=2):
             supervisor_prefs = OrderedDict()  # type: Dict[Student, int]
             for srow, student in enumerate(students, start=2):
-                pref_value = svp_rows[srow - 1][pcol - 1]
+                pref_contents = svp_rows[srow - 1][pcol - 1]
                 try:
-                    pref = pref_value or None
-                except (ValueError, TypeError):
+                    pref = get_pref_val(pref_contents)
+                except ValueError:
                     raise ValueError(
                         f"Bad preference at row={srow}, col={pcol} in "
-                        f"{SheetNames.SUPERVISOR_PREFERENCES}"
+                        f"{SheetNames.SUPERVISOR_PREFERENCES}: "
+                        f"{pref_contents!r}"
                     )
                 supervisor_prefs[student] = pref
             project.set_supervisor_preferences(
@@ -569,9 +601,10 @@ class Problem(object):
                 preferences=supervisor_prefs,
                 allow_ties=config.allow_supervisor_preference_ties,
                 preference_power=config.preference_power,
+                input_rank_notation=config.input_rank_notation,
             )
         del ws_supervisorprefs, svp_rows, _sn_from_sheet, _sn_from_students
-        del pcol, project, supervisor_prefs, srow, student, pref_value, pref
+        del pcol, project, supervisor_prefs, srow, student, pref_contents, pref
 
         # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         # Eligibility
@@ -614,6 +647,8 @@ class Problem(object):
             for pcol, project in enumerate(projects, start=2):
                 for srow, student in enumerate(students, start=2):
                     eligibility_val = el_rows[srow - 1][pcol - 1]
+                    if isinstance(eligibility_val, str):
+                        eligibility_val = eligibility_val.strip()
                     if eligibility_val in TRUE_VALUES:
                         eligible = True
                     elif eligibility_val in FALSE_VALUES:

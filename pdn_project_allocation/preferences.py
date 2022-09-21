@@ -28,16 +28,138 @@ Preferences class.
 
 """
 
-from collections import OrderedDict
+from collections import Counter, OrderedDict
 import logging
 import operator
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 from cardinal_pythonlib.maths_py import sum_of_integers_in_inclusive_range
 
-from pdn_project_allocation.constants import DEFAULT_PREFERENCE_POWER
+from pdn_project_allocation.constants import (
+    DEFAULT_PREFERENCE_POWER,
+    DEFAULT_RANK_NOTATION,
+    RankNotation,
+)
 
 log = logging.getLogger(__name__)
+
+
+# =============================================================================
+# Conversion between ways of expressing preferences, given ties.
+# =============================================================================
+
+
+def convert_rank_notation(
+    preferences: List[Union[int, float]],
+    src: RankNotation,
+    dst: RankNotation,
+) -> List[Union[int, float]]:
+    """
+    Converts a list of ranks between rank notation systems.
+    Raises ValueError if something is bad.
+    """
+
+    def intify(q: Union[float, int]) -> Union[float, int]:
+        """
+        Convert to int if it is in fact an integer.
+        """
+        int_q = int(q)
+        return int_q if int_q == q else q
+
+    # Input checks
+    for x in preferences:
+        if not isinstance(x, (int, float)) or x <= 0:
+            raise ValueError(f"Bad preferences: {preferences!r}")
+
+    # Count
+    n = len(preferences)
+    if n == 0:
+        return []
+
+    # From source to fractional, stored in "fractional":
+    if src == RankNotation.FRACTIONAL:
+        # No change
+        fractional = preferences
+
+    elif src == RankNotation.COMPETITION:
+        # Change e.g. 1, 1, 3, 3, 5 -> 1.5, 1.5, 3.5, 3.5, 5
+        fractional = []
+        prefcount = Counter(preferences)
+        for x in preferences:
+            if not isinstance(x, int) or not 1 <= x <= n:
+                raise ValueError(
+                    f"Bad {RankNotation.COMPETITION} preferences: "
+                    f"{preferences!r}"
+                )
+            c = prefcount[x]
+            # If there are three "1"s, then they should each have the value
+            # (1 + 2 + 3) / 3.
+            fractional.append(intify(sum(range(x, x + c)) / c))
+
+    elif src == RankNotation.DENSE:
+        # Change e.g. 1, 1, 2, 2, 3 -> 1.5, 1.5, 3.5, 3.5, 5
+        fractional = []
+        prefcount = Counter(preferences)
+        highest_permitted = len(prefcount)
+        for x in preferences:
+            if not isinstance(x, int) or not 1 <= x <= highest_permitted:
+                raise ValueError(
+                    f"Bad {RankNotation.DENSE} preferences: {preferences!r}"
+                )
+            c = prefcount[x]
+            n_below = sum(
+                rankcount
+                for rankval, rankcount in prefcount.items()
+                if rankval < x
+            )
+            fractional.append(
+                intify(sum(range(n_below + 1, n_below + 1 + c)) / c)
+            )
+
+    else:
+        raise AssertionError(f"Bad RankNotation: src = {src!r}")
+
+    # Check intermediate is OK.
+    s = sum(fractional)
+    t = sum(range(1, n + 1))  # sum from 1 to n inclusive
+    if s != t:
+        raise ValueError(
+            f"Bad preferences {preferences} in {src} notation. In "
+            f"{RankNotation.FRACTIONAL} notation that is {fractional}; "
+            f"n = {n}, so total should be {t}, but is {s}"
+        )
+
+    # From mathematical intermediate to destination:
+    if dst == RankNotation.FRACTIONAL:
+        final = fractional
+
+    elif dst == RankNotation.COMPETITION:
+        # Change e.g. 1.5, 1.5, 3.5, 3.5, 5 -> 1, 1, 3, 3, 5
+        final = []
+        fcount = Counter(fractional)
+        for x in fractional:
+            refcount = fcount[x]
+            lowest = int(x - (refcount - 1) / 2)
+            final.append(lowest)
+
+    elif dst == RankNotation.DENSE:
+        # Change e.g. 1.5, 1.5, 3.5, 3.5, 5 -> 1, 1, 2, 2, 3
+        final = []
+        fcount = Counter(fractional)
+        for x in fractional:
+            n_distinct_values_below = sum(
+                1 for rankval in fcount.keys() if rankval < x
+            )
+            final.append(n_distinct_values_below + 1)
+
+    else:
+        raise AssertionError(f"Bad RankNotation: dst = {dst!r}")
+
+    # log.critical(
+    #     f"preferences = {preferences}, src = {src}, dst = {dst}, "
+    #     f"fractional = {fractional}, final = {final}"
+    # )
+    return final
 
 
 # =============================================================================
@@ -48,7 +170,8 @@ log = logging.getLogger(__name__)
 class Preferences(object):
     """
     Represents preference as a mapping from arbitrary objects (being preferred)
-    to ranks.
+    to ranks. Ranks are "dissatisfaction scores", in that the rank of 1 is
+    most preferred, and higher-numbered ranks less preferred.
     """
 
     def __init__(
@@ -58,6 +181,7 @@ class Preferences(object):
         owner: Any = None,
         allow_ties: bool = False,
         preference_power: float = DEFAULT_PREFERENCE_POWER,
+        input_rank_notation: RankNotation = DEFAULT_RANK_NOTATION,
     ) -> None:
         """
         Args:
@@ -74,6 +198,8 @@ class Preferences(object):
                 Allows ties to be expressed.
             preference_power:
                 Power (exponent) to raise preferences to.
+            input_rank_notation:
+                Notation for input ranks (see RankNotation).
 
         Other attributes:
         - ``available_dissatisfaction``: sum of [1 ... ``n_options`]
@@ -82,6 +208,8 @@ class Preferences(object):
           have expressed a total dissatisfaction of 1. If you have expressed
           a preference for rank #1 and rank #2, you have expressed a total
           dissatisfaction of 3.)
+
+        May raise ValueError if the preferences are bad.
         """
         self._n_options = n_options
         self._preferences = OrderedDict()  # type: Dict[Any, Union[int, float]]
@@ -93,12 +221,28 @@ class Preferences(object):
         self._allow_ties = allow_ties
         self._preference_power = preference_power
 
-        if preferences:
-            for item, rank in preferences.items():
-                if rank is not None:
-                    self.add(item, rank, _validate=False)
-                    # ... defer validation until all data in...
-            self._validate()  # OK, now validate
+        if not preferences:
+            return
+
+        # Convert rank notation to mathematical standard.
+        # Deal with the fact that some ranks may be None by creating a map
+        # from old to new ranks.
+        old_ranks = list(filter(None, preferences.values()))
+        new_ranks = convert_rank_notation(
+            old_ranks,
+            src=input_rank_notation,
+            dst=RankNotation.FRACTIONAL,
+        )  # May raise ValueError
+        rankmap = {old: new for old, new in zip(old_ranks, new_ranks)}
+        rankmap[None] = None
+
+        # Store preferences.
+        for item, rank in preferences.items():
+            if rank is not None:
+                self.add(item, rankmap[rank], _validate=False)
+                # ... defer validation until all data in...
+
+        self._validate()  # OK, now validate
 
     def __str__(self) -> str:
         """

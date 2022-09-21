@@ -28,15 +28,22 @@ Student class.
 
 """
 
+import logging
 from typing import Dict, List, TYPE_CHECKING
 
 from cardinal_pythonlib.reprfunc import auto_repr
 
-from pdn_project_allocation.constants import DEFAULT_PREFERENCE_POWER
+from pdn_project_allocation.constants import (
+    DEFAULT_RANK_NOTATION,
+    DEFAULT_PREFERENCE_POWER,
+    RankNotation,
+)
 from pdn_project_allocation.preferences import Preferences
 
 if TYPE_CHECKING:
     from pdn_project_allocation.project import Project
+
+log = logging.getLogger(__name__)
 
 
 # =============================================================================
@@ -57,6 +64,7 @@ class Student(object):
         n_projects: int,
         allow_ties: bool = False,
         preference_power: float = DEFAULT_PREFERENCE_POWER,
+        input_rank_notation: RankNotation = DEFAULT_RANK_NOTATION,
     ) -> None:
         """
         Args:
@@ -73,16 +81,23 @@ class Student(object):
                 Allow ties in preferences?
             preference_power:
                 Power (exponent) to raise preferences to.
+            input_rank_notation:
+                Notation for input ranks (see RankNotation).
         """
         self.name = name
         self.number = number
-        self.preferences = Preferences(
-            n_options=n_projects,
-            preferences=preferences,
-            owner=self,
-            allow_ties=allow_ties,
-            preference_power=preference_power,
-        )
+        try:
+            self.preferences = Preferences(
+                n_options=n_projects,
+                preferences=preferences,
+                owner=self,
+                allow_ties=allow_ties,
+                preference_power=preference_power,
+                input_rank_notation=input_rank_notation,
+            )
+        except ValueError:
+            log.critical(f"Error processing preferences for student: {name}")
+            raise
 
     def __str__(self) -> str:
         """

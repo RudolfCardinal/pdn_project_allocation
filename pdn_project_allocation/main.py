@@ -54,6 +54,7 @@ from pdn_project_allocation.constants import (
     INPUT_TYPES_SUPPORTED,
     OptimizeMethod,
     OUTPUT_TYPES_SUPPORTED,
+    RankNotation,
     RNG_SEED,
     SheetHeadings,
     SheetNames,
@@ -200,6 +201,18 @@ first row is the title row):
         help="Allow projects that say that all students are ineligible (e.g. "
         "because they've been pre-allocated by different process)?",
     )
+    ranknotation_k, ranknotation_desc = keys_descriptions_from_enum(
+        RankNotation, keys_to_lower=True
+    )
+    data_group.add_argument(
+        "--input_rank_notation",
+        type=str,
+        choices=ranknotation_k,
+        default=RankNotation.FRACTIONAL,
+        help=f"Rank notation for input. -- {ranknotation_desc} -- Note that "
+        f"{RankNotation.FRACTIONAL} notation is always used for internal "
+        f"calculation and outputs.",
+    )
 
     method_group = parser.add_argument_group("Method")
     method_group.add_argument(
@@ -220,6 +233,16 @@ first row is the title row):
         action="store_true",
         help="Prevent students being allocated to projects they've not "
         "explicitly ranked?",
+    )
+    method_k, method_desc = keys_descriptions_from_enum(
+        OptimizeMethod, keys_to_lower=True
+    )
+    method_group.add_argument(
+        "--method",
+        type=str,
+        choices=method_k,
+        default=DEFAULT_METHOD.name,
+        help=f"Method of solving. -- {method_desc} --",
     )
 
     technical_group = parser.add_argument_group("Technicalities")
@@ -247,16 +270,6 @@ first row is the title row):
         "--debug_model",
         action="store_true",
         help="Report the details of the MIP model before solving.",
-    )
-    method_k, method_desc = keys_descriptions_from_enum(
-        OptimizeMethod, keys_to_lower=True
-    )
-    method_group.add_argument(
-        "--method",
-        type=str,
-        choices=method_k,
-        default=DEFAULT_METHOD.name,
-        help=f"Method of solving. -- {method_desc} --",
     )
 
     args = parser.parse_args()
@@ -288,6 +301,7 @@ first row is the title row):
         no_shuffle=args.no_shuffle,
         optimize_method=OptimizeMethod[args.method],
         preference_power=args.preference_power,
+        input_rank_notation=RankNotation[args.input_rank_notation],
         student_must_have_choice=args.student_must_have_choice,
         supervisor_weight=args.supervisor_weight,
     )

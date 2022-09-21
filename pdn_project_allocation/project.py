@@ -33,7 +33,11 @@ from typing import Dict, List, Optional
 
 from cardinal_pythonlib.reprfunc import auto_repr
 
-from pdn_project_allocation.constants import DEFAULT_PREFERENCE_POWER
+from pdn_project_allocation.constants import (
+    DEFAULT_PREFERENCE_POWER,
+    DEFAULT_RANK_NOTATION,
+    RankNotation,
+)
 from pdn_project_allocation.helperfunc import supervisor_names_to_csv
 from pdn_project_allocation.preferences import Preferences
 from pdn_project_allocation.student import Student
@@ -118,17 +122,25 @@ class Project(object):
         preferences: Dict[Student, int],
         allow_ties: bool = False,
         preference_power: float = DEFAULT_PREFERENCE_POWER,
+        input_rank_notation: RankNotation = DEFAULT_RANK_NOTATION,
     ) -> None:
         """
         Sets the supervisor's preferences about students for a project.
         """
-        self.supervisor_preferences = Preferences(
-            n_options=n_students,
-            owner=self,
-            preferences=preferences,
-            allow_ties=allow_ties,
-            preference_power=preference_power,
-        )
+        try:
+            self.supervisor_preferences = Preferences(
+                n_options=n_students,
+                owner=self,
+                preferences=preferences,
+                allow_ties=allow_ties,
+                preference_power=preference_power,
+                input_rank_notation=input_rank_notation,
+            )
+        except ValueError:
+            log.critical(
+                f"Error processing preferences for project: {self.title}"
+            )
+            raise
 
     def dissatisfaction(self, student: Student) -> float:
         """

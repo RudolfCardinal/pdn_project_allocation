@@ -30,9 +30,11 @@ Python package configuration.
 
 from setuptools import setup, find_packages
 
+from pdn_project_allocation.constants import VERSION
+
 setup(
     name="pdn_project_allocation",
-    version="0.0.2",
+    version=VERSION,
     description="Allocate students to projects",
     url="https://github.com/RudolfCardinal/pdn_project_allocation.git",
     author="Rudolf Cardinal",
@@ -68,6 +70,7 @@ setup(
         # -------------------------------------------------------------------------
         "black==22.3.0",  # auto code formatter
         "flake8==3.8.3",  # code checks
+        "pytest==7.1.1",  # automatic testing
     ],
     # Launch scripts:
     entry_points={
