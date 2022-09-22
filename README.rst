@@ -385,7 +385,7 @@ preference list" (not that no students are unassigned!).
 
 We can go one step further, and enforce stability via integer linear
 programming, as per Abeledo & Blum (1996,
-https://doi.org/10.1016/0024-3795(95)00052-6 ). However, the algorithm assumes
+https://doi.org/10.1016/0024-3795(95)00052-6). However, the algorithm assumes
 strict ordering (e.g. that each student strictly ranks all projects, and each
 supervisor strictly ranks all students that apply to their projects).
 
@@ -486,3 +486,8 @@ Changelog
 - 2021-10-03, v1.4.0:
 
   - Project short titles, used as column headings.
+
+- 2022-22-09, v1.5.0:
+
+  - Support competition and dense rankings as input formats (but retaining
+    fractional rankings for calculation and output).
