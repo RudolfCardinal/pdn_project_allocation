@@ -47,6 +47,7 @@ from pdn_project_allocation.constants import (
     DEFAULT_MAX_SECONDS,
     DEFAULT_METHOD,
     DEFAULT_PREFERENCE_POWER,
+    DEFAULT_RANK_NOTATION,
     DEFAULT_SUPERVISOR_WEIGHT,
     EXIT_FAILURE,
     EXIT_SUCCESS,
@@ -208,10 +209,11 @@ first row is the title row):
         "--input_rank_notation",
         type=str,
         choices=ranknotation_k,
-        default=RankNotation.FRACTIONAL,
+        default=DEFAULT_RANK_NOTATION.name,
         help=f"Rank notation for input. -- {ranknotation_desc} -- Note that "
-        f"{RankNotation.FRACTIONAL} notation is always used for internal "
-        f"calculation and outputs.",
+        f"{RankNotation.FRACTIONAL.name} notation is always used for internal "
+        f"calculation (as other methods are biased) and outputs (so scores "
+        f"are consistent with ranks).",
     )
 
     method_group = parser.add_argument_group("Method")

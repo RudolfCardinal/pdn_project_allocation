@@ -42,13 +42,13 @@ setup(
     license="GNU General Public License v3 or later (GPLv3+)",
     # See https://pypi.org/classifiers/
     classifiers=[
-        "Development Status :: 4 - Beta",
+        "Development Status :: 5 - Production/Stable",
         "Intended Audience :: Education",
         "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",  # noqa
         "Natural Language :: English",
         "Operating System :: OS Independent",
         "Programming Language :: Python :: 3",
-        "Programming Language :: Python :: 3.6",
+        "Programming Language :: Python :: 3.8",
         "Topic :: Education",
     ],
     # Python code:

@@ -45,6 +45,9 @@ class PreferenceConversionTests(unittest.TestCase):
             # Tuple of lists: fractional, competition, dense.
             ([1.5, 1.5, 3], [1, 1, 3], [1, 1, 2]),
             ([1.5, 1.5, 3.5, 3.5, 5], [1, 1, 3, 3, 5], [1, 1, 2, 2, 3]),
+            ([1, 2, 3, 4, 5], [1, 2, 3, 4, 5], [1, 2, 3, 4, 5]),
+            ([1, 3, 3, 3, 5], [1, 2, 2, 2, 5], [1, 2, 2, 2, 3]),
+            ([1, 3, 3, 3], [1, 2, 2, 2], [1, 2, 2, 2]),
         )
         for f, c, d in groups:
             self.assertEqual(
@@ -76,3 +79,32 @@ class PreferenceConversionTests(unittest.TestCase):
             self.assertEqual(
                 convert_rank_notation(d, src=self.D, dst=self.D), d
             )
+
+        bad_f = (
+            [1, 2, 4],
+            [1, 1, 2],
+            [1, 1, 3],
+            [1.5],
+            [2],
+            [1, "hello"],
+            [1, None],
+        )
+        for f in bad_f:
+            self.assertRaises(ValueError, convert_rank_notation, f, self.F)
+
+        bad_c = (
+            [1, 2, 2, 3],
+            [1, 1.5, 1.5, 4],
+            [2],
+            [1.1],
+        )
+        for c in bad_c:
+            self.assertRaises(ValueError, convert_rank_notation, c, self.C)
+
+        bad_d = (
+            [1, 1.5, 1.5, 3],
+            [1, 1, 3],
+            [2],
+        )
+        for d in bad_d:
+            self.assertRaises(ValueError, convert_rank_notation, d, self.D)

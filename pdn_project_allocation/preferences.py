@@ -31,7 +31,7 @@ Preferences class.
 from collections import Counter, OrderedDict
 import logging
 import operator
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 from cardinal_pythonlib.maths_py import sum_of_integers_in_inclusive_range
 
@@ -50,9 +50,9 @@ log = logging.getLogger(__name__)
 
 
 def convert_rank_notation(
-    preferences: List[Union[int, float]],
+    preferences: Sequence[Union[int, float]],
     src: RankNotation,
-    dst: RankNotation,
+    dst: RankNotation = DEFAULT_RANK_NOTATION,
 ) -> List[Union[int, float]]:
     """
     Converts a list of ranks between rank notation systems.
@@ -79,7 +79,9 @@ def convert_rank_notation(
     # From source to fractional, stored in "fractional":
     if src == RankNotation.FRACTIONAL:
         # No change
-        fractional = preferences
+        fractional = list(preferences)
+        # ... fulfils promise that result is a list
+        # ... also means result not same object as input
 
     elif src == RankNotation.COMPETITION:
         # Change e.g. 1, 1, 3, 3, 5 -> 1.5, 1.5, 3.5, 3.5, 5
@@ -129,7 +131,7 @@ def convert_rank_notation(
             f"n = {n}, so total should be {t}, but is {s}"
         )
 
-    # From mathematical intermediate to destination:
+    # From fractional intermediate to destination:
     if dst == RankNotation.FRACTIONAL:
         final = fractional
 
@@ -224,7 +226,7 @@ class Preferences(object):
         if not preferences:
             return
 
-        # Convert rank notation to mathematical standard.
+        # Convert rank notation to fractional standard.
         # Deal with the fact that some ranks may be None by creating a map
         # from old to new ranks.
         old_ranks = list(filter(None, preferences.values()))
