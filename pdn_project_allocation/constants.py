@@ -93,7 +93,7 @@ class SheetHeadings(object):
 class RankNotation(Enum, metaclass=CaseInsensitiveEnumMeta):
     """
     Ways of expressing ranks, and in particular ways of expressing tied ranks.
-    See https://en.wikipedia.org/wiki/Ranking#Ranking_in_statistics.
+    See https://en.wikipedia.org/wiki/Ranking.
     """
 
     FRACTIONAL = "Fractional ranks (sum unaltered by ties; e.g. 1.5, 1.5, 3)"

@@ -141,6 +141,29 @@ Explanation of how this program works
 - If the adminstrator permits, I might also express ties. For example, I might
   express "joint second and third" by giving preferences 1, 2.5, 2.5, 4, 5.
 
+  - This is "fractional" ranking (https://en.wikipedia.org/wiki/Ranking). It's
+    the default input format. It's the only format used in calculation, because
+    alternatives are biased, discussed below. (And it's the only output format,
+    because this makes output ranks consistent with other output scores, which
+    include means/sums of ranks.)
+
+  - You can choose to use "competition" ranking as an input format; the
+    equivalent competition ranks for our example would be 1, 2, 2, 4, 5.
+
+  - You can also choose "dense" ranking as an input format; that would be 1, 2,
+    2, 3, 4 in our example.
+
+  - Note that both competition and dense rankings are biased, so must not be
+    used for calculation. For example, if person A rates two projects top and
+    then a third project (competition ranks 1, 1, 3, totalling 5; dense ranks
+    1, 1, 2, totalling 4), and person B ranks three projects in order (1, 2, 3,
+    totalling 6), then there are more ways to make person A completely happy;
+    the maximization of overall happiness favours person A. In fractional
+    ranking (in which person A would be 1.5, 1.5, 3, totalling 6), every person
+    has the same notional number of "dissatisfaction points" to allocate.
+    Rankings are always converted immediately to fractional rankings
+    internally.
+
 - The program enforces the requirement that a student's scores for all the
   projects (those explicitly ranked and those ranked by default) must add up to
   the total dissatisfaction (210 in this example). It also enforces that
