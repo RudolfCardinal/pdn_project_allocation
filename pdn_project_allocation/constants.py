@@ -37,9 +37,6 @@ from cardinal_pythonlib.enumlike import CaseInsensitiveEnumMeta
 # Constants
 # =============================================================================
 
-VERSION = "1.5.0"
-VERSION_DATE = "2022-09-21"
-
 DEFAULT_PREFERENCE_POWER = 1.0
 DEFAULT_MAX_SECONDS = 1e100  # the default in mip
 DEFAULT_SUPERVISOR_WEIGHT = 0.3  # 70% student, 30% supervisor by default

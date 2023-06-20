@@ -35,12 +35,13 @@ import random
 import sys
 import traceback
 
-from cardinal_pythonlib.argparse_func import (
-    RawDescriptionArgumentDefaultsHelpFormatter,
-)
 from cardinal_pythonlib.enumlike import keys_descriptions_from_enum
 from cardinal_pythonlib.logs import main_only_quicksetup_rootlogger
 from cardinal_pythonlib.cmdline import cmdline_quote
+from rich_argparse import (
+    ArgumentDefaultsRichHelpFormatter,
+    RawDescriptionRichHelpFormatter,
+)
 
 from pdn_project_allocation.config import Config
 from pdn_project_allocation.constants import (
@@ -67,6 +68,24 @@ log = logging.getLogger(__name__)
 
 
 # =============================================================================
+# Pretty arguments
+# =============================================================================
+
+
+class RawDescriptionArgumentDefaultsRichHelpFormatter(
+    ArgumentDefaultsRichHelpFormatter, RawDescriptionRichHelpFormatter
+):
+    """
+    Combines the features of
+
+    - :class:`RawDescriptionRichHelpFormatter` -- don't mangle the description
+    - :class:`ArgumentDefaultsRichHelpFormatter` -- print argument defaults
+    """
+
+    pass
+
+
+# =============================================================================
 # main
 # =============================================================================
 
@@ -77,7 +96,7 @@ def main() -> None:
     """
     # noinspection PyTypeChecker
     parser = argparse.ArgumentParser(
-        formatter_class=RawDescriptionArgumentDefaultsHelpFormatter,
+        formatter_class=RawDescriptionArgumentDefaultsRichHelpFormatter,
         description=f"""
 Allocate students to projects, maximizing some version of happiness.
 

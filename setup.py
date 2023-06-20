@@ -30,7 +30,7 @@ Python package configuration.
 
 from setuptools import setup, find_packages
 
-from pdn_project_allocation.constants import VERSION
+from pdn_project_allocation.version import VERSION
 
 setup(
     name="pdn_project_allocation",
@@ -65,6 +65,7 @@ setup(
         "matching==1.4",
         "openpyxl==3.0.10",
         "lxml==4.9.1",  # Will speed up openpyxl export
+        "rich-argparse==0.5.0",  # colourful help
         # -------------------------------------------------------------------------
         # For development:
         # -------------------------------------------------------------------------

@@ -41,18 +41,14 @@ from typing import Dict, Generator, List, Tuple, TYPE_CHECKING
 from cardinal_pythonlib.cmdline import cmdline_quote
 from openpyxl.workbook.workbook import Workbook
 
-from pdn_project_allocation.constants import (
-    EXT_XLSX,
-    SheetNames,
-    VERSION,
-    VERSION_DATE,
-)
+from pdn_project_allocation.constants import EXT_XLSX, SheetNames
 from pdn_project_allocation.helperfunc import (
     autosize_openpyxl_column,
     autosize_openpyxl_worksheet_columns,
 )
 from pdn_project_allocation.project import Project
 from pdn_project_allocation.student import Student
+from pdn_project_allocation.version import VERSION, VERSION_DATE
 
 if TYPE_CHECKING:
     from pdn_project_allocation.problem import Problem
