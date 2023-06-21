@@ -40,8 +40,10 @@ log = logging.getLogger(__name__)
 THISDIR = os.path.dirname(os.path.realpath(__file__))
 PROG = os.path.join(THISDIR, "main.py")
 INPUTDIR = os.path.join(THISDIR, "testdata")
-OUTPUTDIR = os.path.join(THISDIR, os.pardir, "testoutput")
+OUTPUTDIR = os.path.join(os.getcwd(), "testoutput")
 
+if not os.path.exists(OUTPUTDIR):
+    os.makedirs(OUTPUTDIR)
 
 # =============================================================================
 # Tests
