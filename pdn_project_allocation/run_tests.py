@@ -29,6 +29,7 @@ Run tests for pdn_project_allocation.
 
 import logging
 import os
+import sys
 import subprocess
 from typing import List
 
@@ -37,6 +38,7 @@ from cardinal_pythonlib.logs import main_only_quicksetup_rootlogger
 
 log = logging.getLogger(__name__)
 
+EXEC = sys.executable
 THISDIR = os.path.dirname(os.path.realpath(__file__))
 PROG = os.path.join(THISDIR, "main.py")
 INPUTDIR = os.path.join(THISDIR, "testdata")
@@ -54,7 +56,7 @@ def process(
     infile: str, outfile: str, other_options: List[str] = None
 ) -> None:
     cmdargs = [
-        "python",
+        EXEC,
         PROG,
         os.path.join(INPUTDIR, infile),
         "--output",
