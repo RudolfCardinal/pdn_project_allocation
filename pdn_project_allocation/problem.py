@@ -750,15 +750,6 @@ class Problem(object):
         n_students = len(students)
 
         # Check project headings
-        cls._assert(
-            len(svp_rows[0]) == 1 + n_projects,
-            (
-                f"First row of {SheetNames.SUPERVISOR_PREFERENCES} should "
-                f"have {1 + n_projects} columns (one on the left for student "
-                f"names plus {n_projects} columns for projects). Yours has "
-                f"{len(svp_rows[0])}."
-            ),
-        )
         for i in range(n_projects):
             cls._assert(
                 svp_rows[0][i + 1].strip() == projects[i].title,
