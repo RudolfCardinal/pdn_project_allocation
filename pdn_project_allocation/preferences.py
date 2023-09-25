@@ -126,9 +126,18 @@ def convert_rank_notation(
     t = sum(range(1, n + 1))  # sum from 1 to n inclusive
     if s != t:
         raise ValueError(
-            f"Bad preferences {preferences} in {src} notation. In "
-            f"{RankNotation.FRACTIONAL} notation that is {fractional}; "
-            f"n = {n}, so total should be {t}, but is {s}"
+            "".join(
+                [
+                    f"Bad preferences {preferences} in {src} notation",
+                    (
+                        f". In {RankNotation.FRACTIONAL} notation that is "
+                        f"{fractional}"
+                        if src != RankNotation.FRACTIONAL
+                        else ""
+                    ),
+                    f"; n = {n}, so total should be {t}, but is {s}",
+                ]
+            )
         )
 
     # From fractional intermediate to destination:

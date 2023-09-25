@@ -138,7 +138,7 @@ class Project(object):
             )
         except (KeyError, ValueError) as exc:
             raise ValueError(
-                f"Error processing preferences for project: {self.title}: "
+                f"Error processing preferences for project: {self.title!r}: "
                 f"{exc}"
             )
 

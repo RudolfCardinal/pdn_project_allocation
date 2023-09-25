@@ -97,7 +97,7 @@ class Student(object):
             )
         except ValueError as exc:
             raise ValueError(
-                f"Error processing preferences for student: {name}: {exc}"
+                f"Error processing preferences for student: {name!r}: {exc}"
             )
 
     def __str__(self) -> str:

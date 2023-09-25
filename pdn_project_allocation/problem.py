@@ -385,7 +385,10 @@ class Problem(object):
         If there are errors, raise ValueError.
         """
         if errors_so_far:
-            msg = f"Errors in context: {context}\n" + "\n".join(errors_so_far)
+            msg = (
+                f"There were spreadsheet errors, in this context: {context}\n"
+                + "\n".join("- " + x for x in errors_so_far)
+            )
             log.critical(msg)
             raise ValueError(msg)
 
@@ -410,7 +413,7 @@ class Problem(object):
         cls._assert(
             obtained_headings == expected_headings,
             (
-                f"Bad headings to worksheet {SheetNames.SUPERVISORS}; "
+                f"Bad headings to worksheet {SheetNames.SUPERVISORS!r}; "
                 f"expected {expected_headings!r}, got {obtained_headings!r}"
             ),
         )
@@ -422,7 +425,7 @@ class Problem(object):
             ok = cls._assert(
                 supervisor_name,
                 (
-                    f"Missing supervisor name in {SheetNames.SUPERVISORS} "
+                    f"Missing supervisor name in {SheetNames.SUPERVISORS!r} "
                     f"row {row_number}"
                 ),
                 errors_so_far=errors_so_far,
@@ -433,7 +436,7 @@ class Problem(object):
                     supervisor_name not in sv_name_to_supervisor,
                     (
                         f"Duplicate supervisor name in "
-                        f"{SheetNames.SUPERVISORS} "
+                        f"{SheetNames.SUPERVISORS!r} "
                         f"row {row_number}: {supervisor_name!r}"
                     ),
                     errors_so_far=errors_so_far,
@@ -446,7 +449,7 @@ class Problem(object):
                 cls._assert(
                     max_n_projects is None or isinstance(max_n_projects, int),
                     (
-                        f"Bad max_n_projects in {SheetNames.SUPERVISORS} "
+                        f"Bad max_n_projects in {SheetNames.SUPERVISORS!r} "
                         f"row {row_number}; is {max_n_projects!r}"
                     ),
                     errors_so_far=errors_so_far,
@@ -459,7 +462,7 @@ class Problem(object):
                 cls._assert(
                     max_n_students is None or isinstance(max_n_students, int),
                     (
-                        f"Bad max_n_students in {SheetNames.SUPERVISORS} "
+                        f"Bad max_n_students in {SheetNames.SUPERVISORS!r} "
                         f"row {row_number}; is {max_n_students!r}"
                     ),
                     errors_so_far=errors_so_far,
@@ -510,7 +513,7 @@ class Problem(object):
         cls._assert(
             obtained_headings == expected_headings,
             (
-                f"Bad headings to worksheet {SheetNames.PROJECTS}; expected "
+                f"Bad headings to worksheet {SheetNames.PROJECTS!r}; expected "
                 f"{expected_headings!r}, got {obtained_headings!r}"
             ),
         )
@@ -523,7 +526,7 @@ class Problem(object):
             ok = cls._assert(
                 project_name,
                 (
-                    f"Missing project name in {SheetNames.PROJECTS} "
+                    f"Missing project name in {SheetNames.PROJECTS!r} "
                     f"row {row_number}"
                 ),
                 errors_so_far=errors_so_far,
@@ -533,7 +536,7 @@ class Problem(object):
                 cls._assert(
                     project_name not in project_names,
                     (
-                        f"Duplicate project name in {SheetNames.PROJECTS} "
+                        f"Duplicate project name in {SheetNames.PROJECTS!r} "
                         f"row {row_number}: {project_name!r}"
                     ),
                     errors_so_far=errors_so_far,
@@ -546,7 +549,7 @@ class Problem(object):
                 cls._assert(
                     isinstance(max_n_students, int),
                     (
-                        f"Bad max_n_students in {SheetNames.PROJECTS} "
+                        f"Bad max_n_students in {SheetNames.PROJECTS!r} "
                         f"row {row_number}; is {max_n_students!r}"
                     ),
                     errors_so_far=errors_so_far,
@@ -561,7 +564,7 @@ class Problem(object):
                     cls._assert(
                         sv_name in sv_name_to_supervisor,
                         (
-                            f"Unknown supervisor in {SheetNames.PROJECTS} "
+                            f"Unknown supervisor in {SheetNames.PROJECTS!r} "
                             f"row {row_number}: {sv_name!r} "
                             f"(full cell is {row[2]!r})"
                         ),
@@ -625,9 +628,9 @@ class Problem(object):
             cls._assert(
                 stp_rows[0][i + 1].strip() == projects[i].title,
                 (
-                    f"First row of {SheetNames.STUDENT_PREFERENCES} sheet "
+                    f"First row of {SheetNames.STUDENT_PREFERENCES!r} sheet "
                     f"must contain all project names in the same order as in "
-                    f"the {SheetNames.PROJECTS} sheet. For project {i + 1}, "
+                    f"the {SheetNames.PROJECTS!r} sheet. For project {i + 1}, "
                     f"the project name is {projects[i].title!r}, but the "
                     f"column heading is {stp_rows[0][i + 1]!r}."
                 ),
@@ -644,7 +647,7 @@ class Problem(object):
             ok = cls._assert(
                 len(row) == expected_row_len,
                 (
-                    f"In {SheetNames.STUDENT_PREFERENCES}, student on row "
+                    f"In {SheetNames.STUDENT_PREFERENCES!r}, student on row "
                     f"{row_number} (named {student_name!r}) has a preference "
                     f"row of the wrong length (expected {expected_row_len}, "
                     f"got {len(row)})."
@@ -655,7 +658,7 @@ class Problem(object):
                     student_name not in student_names,
                     (
                         f"Duplicate student name in "
-                        f"{SheetNames.STUDENT_PREFERENCES} "
+                        f"{SheetNames.STUDENT_PREFERENCES!r} "
                         f"row {row_number}: {student_name!r}"
                     ),
                     errors_so_far=errors_so_far,
@@ -678,8 +681,8 @@ class Problem(object):
                     ok = cls._assert(
                         False,
                         (
-                            f"Bad preference for student {student_name} in "
-                            f"{SheetNames.STUDENT_PREFERENCES} "
+                            f"Bad preference for student {student_name!r} in "
+                            f"{SheetNames.STUDENT_PREFERENCES!r} "
                             f"row {row_number}: {pref_contents!r}"
                         ),
                         errors_so_far=errors_so_far,
@@ -754,18 +757,18 @@ class Problem(object):
             cls._assert(
                 svp_rows[0][i + 1].strip() == projects[i].title,
                 (
-                    f"First row of {SheetNames.SUPERVISOR_PREFERENCES} sheet "
-                    f"must contain all project names in the same order as in "
-                    f"the {SheetNames.PROJECTS} sheet. For project {i + 1}, "
-                    f"the project name is {projects[i].title!r}, but the "
-                    f"column heading is {svp_rows[0][i + 1]!r}."
+                    f"First row of {SheetNames.SUPERVISOR_PREFERENCES!r} "
+                    f"sheet must contain all project names in the same order "
+                    f"as in the {SheetNames.PROJECTS!r} sheet. For project "
+                    f"{i + 1}, the project name is {projects[i].title!r}, but "
+                    f"the column heading is {svp_rows[0][i + 1]!r}."
                 ),
             )
         # Check student names
         cls._assert(
             len(svp_rows) == 1 + n_students,
             (
-                f"Sheet {SheetNames.SUPERVISOR_PREFERENCES} should have "
+                f"Sheet {SheetNames.SUPERVISOR_PREFERENCES!r} should have "
                 f"{1 + n_students} rows (one header row plus {n_students} "
                 f"rows for students). Yours has {len(svp_rows)}."
             ),
@@ -778,9 +781,9 @@ class Problem(object):
         cls._assert(
             _sn_from_sheet == _sn_from_students,
             (
-                f"First column of {SheetNames.SUPERVISOR_PREFERENCES} sheet "
+                f"First column of {SheetNames.SUPERVISOR_PREFERENCES!r} sheet "
                 f"must contain all student names in the same order as in the "
-                f"{SheetNames.STUDENT_PREFERENCES} sheet. Mismatch is: "
+                f"{SheetNames.STUDENT_PREFERENCES!r} sheet. Mismatch is: "
                 f"{mismatch(_sn_from_sheet, _sn_from_students)}"
             ),
         )
@@ -799,7 +802,7 @@ class Problem(object):
                         False,
                         (
                             f"Bad preference at row={srow}, col={pcol} in "
-                            f"{SheetNames.SUPERVISOR_PREFERENCES}: "
+                            f"{SheetNames.SUPERVISOR_PREFERENCES!r}: "
                             f"{pref_contents!r}"
                         ),
                     )
@@ -855,9 +858,9 @@ class Problem(object):
             cls._assert(
                 el_rows[0][i + 1].strip() == projects[i].title,
                 (
-                    f"First row of {SheetNames.ELIGIBILITY} sheet must "
+                    f"First row of {SheetNames.ELIGIBILITY!r} sheet must "
                     f"contain all project names in the same order as in the "
-                    f"{SheetNames.PROJECTS} sheet. For project {i + 1}, "
+                    f"{SheetNames.PROJECTS!r} sheet. For project {i + 1}, "
                     f"project name is {projects[i].title!r}, but column "
                     f"heading is {el_rows[0][i + 1]!r}."
                 ),
@@ -871,9 +874,9 @@ class Problem(object):
         cls._assert(
             _sn_from_sheet == _sn_from_students,
             (
-                f"First column of {SheetNames.ELIGIBILITY} sheet "
+                f"First column of {SheetNames.ELIGIBILITY!r} sheet "
                 f"must contain all student names in the same order as in the "
-                f"{SheetNames.STUDENT_PREFERENCES} sheet. Mismatch is: "
+                f"{SheetNames.STUDENT_PREFERENCES!r} sheet. Mismatch is: "
                 f"{mismatch(_sn_from_sheet, _sn_from_students)}"
             ),
         )
