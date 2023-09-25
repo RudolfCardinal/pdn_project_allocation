@@ -632,17 +632,22 @@ class Problem(object):
                     f"column heading is {stp_rows[0][i + 1]!r}."
                 ),
             )
+        expected_row_len = n_projects + 1
         errors_so_far = []  # type: List[str]
         for row_number, row in enumerate(stp_rows[1:], start=2):
             student_number = row_number - 1
             student_name = row[0].strip()
+            # 2023-09-25: often there are blank rows at the end. That's not
+            # unreasonable, so truncate.
+            row = row[:expected_row_len]
+            # Any residual error here is therefore a row that's too short.
             ok = cls._assert(
-                len(row) == n_projects + 1,
+                len(row) == expected_row_len,
                 (
                     f"In {SheetNames.STUDENT_PREFERENCES}, student on row "
                     f"{row_number} (named {student_name!r}) has a preference "
-                    f"row of the wrong length (expected {n_projects + 1}, got "
-                    f"{len(row)})."
+                    f"row of the wrong length (expected {expected_row_len}, "
+                    f"got {len(row)})."
                 ),
             )
             ok = (
