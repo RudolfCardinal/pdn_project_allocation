@@ -64,12 +64,14 @@ from pdn_project_allocation.constants import (
     OptimizeMethod,
     SheetHeadings,
     SheetNames,
+    Switches,
     TRUE_VALUES,
 )
 from pdn_project_allocation.eligibility import Eligibility
 from pdn_project_allocation.helperfunc import (
     autosize_openpyxl_column,
     autosize_openpyxl_worksheet_columns,
+    bold_first_row,
     csv_to_supervisor_names,
     mismatch,
     read_until_empty_row,
@@ -95,7 +97,7 @@ ALMOST_ONE = 0.99
 # =============================================================================
 
 
-class Problem(object):
+class Problem:
     """
     Represents the problem (and solves it) -- projects (with their supervisor's
     preferences for students), students (with their preferences for projects),
@@ -694,6 +696,18 @@ class Problem(object):
             student_names.append(student_name)
             if not ok:
                 continue
+            preferred_amongst_unranked = []  # type: List[Project]
+            if config.assume_supervisor_affinity:
+                preferred_supervisors = set()  # type: Set[Supervisor]
+                for project in student_preferences.keys():
+                    for supervisor in project.supervisors:
+                        preferred_supervisors.add(supervisor)
+                for project in projects:
+                    if project not in student_preferences.keys() and any(
+                        supervisor in preferred_supervisors
+                        for supervisor in project.supervisors
+                    ):
+                        preferred_amongst_unranked.append(project)
             try:
                 new_student = Student(
                     name=student_name,
@@ -703,6 +717,7 @@ class Problem(object):
                     allow_ties=config.allow_student_preference_ties,
                     preference_power=config.preference_power,
                     input_rank_notation=config.input_rank_notation,
+                    preferred_amongst_unranked=preferred_amongst_unranked,
                 )
                 students.append(new_student)
             except Exception as exc:
@@ -906,7 +921,7 @@ class Problem(object):
                             f"{TRUE_VALUES} for 'eligible', or one of "
                             f"{FALSE_VALUES} for 'ineligible'. The meaning of "
                             f"{MISSING_VALUES} is configurable; see "
-                            f"'--missing_eligibility'."
+                            f"{Switches.MISSING_ELIGIBILITY!r}."
                         ),
                         errors_so_far=errors_so_far,
                         proceed_if_error=True,
@@ -929,7 +944,9 @@ class Problem(object):
     # -------------------------------------------------------------------------
 
     # noinspection DuplicatedCode
-    def write_to_xlsx_workbook(self, wb: Workbook) -> None:
+    def write_to_xlsx_workbook(
+        self, wb: Workbook, with_internal_prefs: bool = False
+    ) -> None:
         """
         Writes the problem data to a spreadsheet (so it can be saved alongside
         the solution).
@@ -938,6 +955,9 @@ class Problem(object):
             wb:
                 A :class:`openpyxl.workbook.workbook.Workbook` to which to
                 write.
+            with_internal_prefs:
+                Add a sheet showing internal calculations, i.e. preferences for
+                projects not explicitly chosen.
         """
         sorted_projects = self.sorted_projects()
         sorted_students = self.sorted_students()
@@ -959,6 +979,7 @@ class Problem(object):
                 [sv.name, sv.max_n_projects, sv.max_n_students]
             )
         autosize_openpyxl_worksheet_columns(supervisor_sheet)
+        bold_first_row(supervisor_sheet)
 
         # ---------------------------------------------------------------------
         # Projects
@@ -981,27 +1002,33 @@ class Problem(object):
                 ]
             )
         autosize_openpyxl_worksheet_columns(project_sheet)
+        bold_first_row(project_sheet)
 
         # ---------------------------------------------------------------------
         # Students
         # ---------------------------------------------------------------------
 
         student_sheet = wb.create_sheet(SheetNames.STUDENT_PREFERENCES)
-        student_sheet.append([""] + [p.title for p in sorted_projects])
+        student_sheet.append(
+            [SheetHeadings.STUDENT] + [p.title for p in sorted_projects]
+        )
         for s in sorted_students:
-            # noinspection PyTypeChecker
             student_sheet.append(
                 [s.name]
                 + [s.preferences.raw_preference(p) for p in sorted_projects]
             )
         autosize_openpyxl_column(student_sheet, 0)
+        # Not all columns (lengthy project titles at top).
+        bold_first_row(student_sheet)
 
         # ---------------------------------------------------------------------
         # Supervisor preferences
         # ---------------------------------------------------------------------
 
         supervisor_sheet = wb.create_sheet(SheetNames.SUPERVISOR_PREFERENCES)
-        supervisor_sheet.append([""] + [p.title for p in sorted_projects])
+        supervisor_sheet.append(
+            [SheetHeadings.STUDENT] + [p.title for p in sorted_projects]
+        )
         for s in sorted_students:
             # noinspection PyTypeChecker
             supervisor_sheet.append(
@@ -1012,13 +1039,17 @@ class Problem(object):
                 ]
             )
         autosize_openpyxl_column(supervisor_sheet, 0)
+        # Not all columns (lengthy project titles at top).
+        bold_first_row(supervisor_sheet)
 
         # ---------------------------------------------------------------------
         # Eligibility
         # ---------------------------------------------------------------------
 
         eligibility_sheet = wb.create_sheet(SheetNames.ELIGIBILITY)
-        eligibility_sheet.append([""] + [p.title for p in sorted_projects])
+        eligibility_sheet.append(
+            [SheetHeadings.STUDENT] + [p.title for p in sorted_projects]
+        )
         for s in sorted_students:
             # noinspection PyTypeChecker
             eligibility_sheet.append(
@@ -1029,6 +1060,48 @@ class Problem(object):
                 ]
             )
         autosize_openpyxl_column(eligibility_sheet, 0)
+        # Not all columns (lengthy project titles at top).
+        bold_first_row(eligibility_sheet)
+
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        # Internal (full) version of student preferences
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        if with_internal_prefs:
+            sti = wb.create_sheet(SheetNames.STUDENT_PREFERENCES_INTERNAL)
+            sti.append(
+                [SheetHeadings.STUDENT] + [p.title for p in sorted_projects]
+            )
+            for s in sorted_students:
+                # noinspection PyTypeChecker
+                sti.append(
+                    [s.name]
+                    + [
+                        s.exponentiated_dissatisfaction(p)
+                        for p in sorted_projects
+                    ]
+                )
+            autosize_openpyxl_column(sti, 0)
+            bold_first_row(sti)
+
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        # Internal (full) version of supervisor preferences
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        if with_internal_prefs:
+            spi = wb.create_sheet(SheetNames.SUPERVISOR_PREFERENCES_INTERNAL)
+            spi.append(
+                [SheetHeadings.STUDENT] + [p.title for p in sorted_projects]
+            )
+            for s in sorted_students:
+                # noinspection PyTypeChecker
+                spi.append(
+                    [s.name]
+                    + [
+                        p.exponentiated_dissatisfaction(s)
+                        for p in sorted_projects
+                    ]
+                )
+            autosize_openpyxl_column(spi, 0)
+            bold_first_row(spi)
 
     # -------------------------------------------------------------------------
     # Solver entry point
@@ -1668,7 +1741,7 @@ class Problem(object):
             # We cannot do a lookup. It has done a deepcopy. We have to match
             # by name.
             mg_project = next(
-                mgp for mgp in mg_projects if mgp.name == mg_project_copy.title
+                mgp for mgp in mg_projects if mgp.name == mg_project_copy.name
             )
             project = mg_project_to_project[mg_project]
             for mg_student_copy in mg_student_copies:
@@ -1676,7 +1749,7 @@ class Problem(object):
                 mg_student = next(
                     mgs
                     for mgs in mg_students
-                    if mgs.name == mg_student_copy.title
+                    if mgs.name == mg_student_copy.name
                 )
                 student = mg_student_to_student[mg_student]
                 allocation[student] = project

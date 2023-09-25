@@ -32,7 +32,6 @@ the Problem class.)
 import csv
 import datetime
 import logging
-import operator
 import os
 from statistics import mean, median, variance
 import sys
@@ -41,13 +40,23 @@ from typing import Dict, Generator, List, Tuple, TYPE_CHECKING
 from cardinal_pythonlib.cmdline import cmdline_quote
 from openpyxl.workbook.workbook import Workbook
 
-from pdn_project_allocation.constants import EXT_XLSX, SheetNames
+from pdn_project_allocation.constants import (
+    CsvHeadings,
+    EXT_XLSX,
+    SheetHeadings,
+    SheetNames,
+    SheetText,
+)
 from pdn_project_allocation.helperfunc import (
     autosize_openpyxl_column,
     autosize_openpyxl_worksheet_columns,
+    bold_cell,
+    bold_first_row,
 )
 from pdn_project_allocation.project import Project
+from pdn_project_allocation.project_popularity import ProjectPopularity
 from pdn_project_allocation.student import Student
+from pdn_project_allocation.supervisor import Supervisor
 from pdn_project_allocation.version import VERSION, VERSION_DATE
 
 if TYPE_CHECKING:
@@ -61,7 +70,7 @@ log = logging.getLogger(__name__)
 # =============================================================================
 
 
-class Solution(object):
+class Solution:
     """
     Represents a potential solution.
     """
@@ -144,6 +153,36 @@ class Solution(object):
         for student in students:
             project = self.allocation[student]
             yield student, project
+
+    def n_students_allocated_to_project(self, project: Project) -> int:
+        """
+        How many students is this project allocated?
+        """
+        return len(self.allocated_students(project))
+
+    def n_students_allocated_to_supervisor(
+        self, supervisor: Supervisor
+    ) -> int:
+        """
+        How many students is this supervisor allocated?
+        """
+        return sum(
+            self.n_students_allocated_to_project(project)
+            for project in self.problem.projects
+            if project.is_supervised_by(supervisor)
+        )
+
+    def n_projects_allocated_to_supervisor(
+        self, supervisor: Supervisor
+    ) -> int:
+        """
+        How many projects is this supervisor allocated?
+        """
+        return sum(
+            (1 if self.n_students_allocated_to_project(project) > 0 else 0)
+            for project in self.problem.projects
+            if project.is_supervised_by(supervisor)
+        )
 
     # -------------------------------------------------------------------------
     # Student dissatisfaction
@@ -337,6 +376,8 @@ class Solution(object):
         """
         log.info(f"Writing output to: {filename}")
 
+        problem = self.problem
+
         # Not this way -- we can't then set column widths.
         #   wb = Workbook(write_only=True)  # doesn't create default sheet
         # Instead:
@@ -347,24 +388,43 @@ class Solution(object):
         # Allocations, by student
         # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         ss = wb.create_sheet(SheetNames.STUDENT_ALLOCATIONS)
+        n_students_assigned_project_not_preferred = 0
+        n_students_assigned_supervisor_not_preferred = 0
         ss.append(
             [
-                "Student",
-                "Project",
-                "Supervisor",
-                "Student's rank of allocated project (dissatisfaction score)",
+                SheetHeadings.STUDENT,
+                SheetHeadings.PROJECT,
+                SheetHeadings.SUPERVISOR,
+                SheetHeadings.STUDENT_PREFERENCE,
+                SheetHeadings.NOT_PREFERRED_PROJECT,
+                SheetHeadings.NOT_PREFERRED_SUPERVISOR,
             ]
         )
         for student, project in self._gen_student_project_pairs():
+            if student.explicitly_ranked_project(project):
+                _unhappy_project = SheetText.STUDENT_HAPPY
+            else:
+                _unhappy_project = SheetText.STUDENT_UNHAPPY_PROJECT
+                n_students_assigned_project_not_preferred += 1
+            if student.explicitly_ranked_any_supervisor(
+                project.supervisors, problem.projects
+            ):
+                _unhappy_supervisor = SheetText.STUDENT_HAPPY
+            else:
+                _unhappy_supervisor = SheetText.STUDENT_UNHAPPY_SUPERVISOR
+                n_students_assigned_supervisor_not_preferred += 1
             ss.append(
                 [
                     student.name,
                     project.title,
                     project.supervisor_name(),
                     student.dissatisfaction(project),
+                    _unhappy_project,
+                    _unhappy_supervisor,
                 ]
             )
         autosize_openpyxl_worksheet_columns(ss)
+        bold_first_row(ss)
 
         # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         # Allocations, by project
@@ -372,16 +432,17 @@ class Solution(object):
         ps = wb.create_sheet(SheetNames.PROJECT_ALLOCATIONS)
         ps.append(
             [
-                "Project",
-                "Supervisor",
-                "Student(s)",
+                SheetHeadings.PROJECT,
+                SheetHeadings.SUPERVISOR,
+                SheetHeadings.N_STUDENTS_ALLOCATED,
+                SheetHeadings.STUDENTS,
                 "Students' rank(s) of allocated project"
                 " (dissatisfaction score)",
                 "Project supervisor's rank(s) of allocated student(s)"
                 " (dissatisfaction score)",
             ]
         )
-        for project in self.problem.sorted_projects():
+        for project in problem.sorted_projects():
             student_names = []  # type: List[str]
             supervisor_dissatisfactions = []  # type: List[float]
             student_dissatisfactions = []  # type: List[float]
@@ -397,62 +458,88 @@ class Solution(object):
                 [
                     project.title,
                     project.supervisor_name(),
+                    self.n_students_allocated_to_project(project),
                     ", ".join(student_names),
                     ", ".join(str(x) for x in student_dissatisfactions),
                     ", ".join(str(x) for x in supervisor_dissatisfactions),
                 ]
             )
         autosize_openpyxl_worksheet_columns(ps)
+        bold_first_row(ps)
+
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        # Allocations, by supervisor
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+        sa = wb.create_sheet(SheetNames.SUPERVISOR_ALLOCATIONS)
+        sa.append(
+            [
+                SheetHeadings.SUPERVISOR,
+                SheetHeadings.MAX_NUMBER_OF_PROJECTS,
+                SheetHeadings.N_PROJECTS_ALLOCATED,
+                SheetHeadings.MAX_NUMBER_OF_STUDENTS,
+                SheetHeadings.N_STUDENTS_ALLOCATED,
+            ]
+        )
+        for supervisor in problem.sorted_supervisors():
+            sa.append(
+                [
+                    supervisor.name,
+                    supervisor.max_n_projects,
+                    self.n_projects_allocated_to_supervisor(supervisor),
+                    supervisor.max_n_students,
+                    self.n_students_allocated_to_supervisor(supervisor),
+                ]
+            )
+        autosize_openpyxl_worksheet_columns(sa)
+        bold_first_row(sa)
 
         # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         # Popularity of projects
         # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         pp = wb.create_sheet(SheetNames.PROJECT_POPULARITY)
-        pp.append(
+        pp.append(ProjectPopularity.headings())
+        popularities = []  # type: List[ProjectPopularity]
+        for project in problem.projects:
+            popularities.append(ProjectPopularity(project, self))
+        ProjectPopularity.sort_and_assign_ranks(popularities)
+        for projpop in popularities:
+            pp.append(projpop.values())
+        autosize_openpyxl_column(pp, 1)  # the supervisor column
+        autosize_openpyxl_column(pp, 6)  # the student column
+        # Not all columns (lengthy project titles at left).
+        bold_first_row(pp)
+
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        # Applied but ineligible -- suggests communication failure
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        ai = wb.create_sheet(SheetNames.APPLIED_BUT_INELIGIBLE)
+        ai.append(
             [
-                "Project",
-                "Supervisor",
-                "Total dissatisfaction score from all students",
-                "Allocated student(s)",
-                "Number of students expressing a preference",
-                "Students expressing a preference",
+                SheetHeadings.STUDENT,
+                SheetHeadings.STUDENT_PREFERENCE,
+                SheetHeadings.ELIGIBLE,
+                SheetHeadings.SUPERVISOR,
+                SheetHeadings.PROJECT,
             ]
         )
-        proj_to_unpop = {}  # type: Dict[Project, float]
-        for project in self.problem.projects:
-            unpopularity = 0
-            for student in self.problem.students:
-                unpopularity += student.dissatisfaction(project)
-            proj_to_unpop[project] = unpopularity
-        for project, unpopularity in sorted(
-            proj_to_unpop.items(), key=operator.itemgetter(1, 0)
-        ):
-            allocated_students = ", ".join(
-                student.name for student in self.allocated_students(project)
-            )
-            student_prefs = {}  # type: Dict[Student, float]
-            for student in self.problem.students:
-                if student.preferences.actively_expressed_preference_for(
+        # Project last, then we can autosize and see everything.
+        for project in problem.sorted_projects():
+            for student in problem.sorted_students():
+                if student.explicitly_ranked_project(
                     project
-                ):
-                    student_prefs[student] = student.preferences.preference(
-                        project
+                ) and not problem.eligibility.is_eligible(student, project):
+                    ai.append(
+                        [
+                            student.name,
+                            student.dissatisfaction(project),
+                            0,
+                            project.supervisor_name(),
+                            project.title,
+                        ]
                     )
-            student_details = []  # type: List[str]
-            for student, studpref in sorted(
-                student_prefs.items(), key=operator.itemgetter(1, 0)
-            ):
-                student_details.append(f"{student.name} ({studpref})")
-            pp.append(
-                [
-                    project.title,
-                    project.supervisor_name(),
-                    unpopularity,
-                    allocated_students,
-                    len(student_details),
-                    ", ".join(student_details),
-                ]
-            )
+        autosize_openpyxl_worksheet_columns(ai)
+        bold_first_row(ai)
 
         # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         # Software, settings, and summary information
@@ -507,6 +594,14 @@ class Solution(object):
                 "Student dissatisfaction minimum",
                 self.student_dissatisfaction_max(),
             ],
+            [
+                "Number of students not assigned a preferred project",
+                n_students_assigned_project_not_preferred,
+            ],
+            [
+                "Number of students not assigned a preferred supervisor",
+                n_students_assigned_supervisor_not_preferred,
+            ],
             [],
             [
                 "Supervisor dissatisfaction (with each student) median",
@@ -535,11 +630,18 @@ class Solution(object):
         for row in zs_rows:
             zs.append(row)
         autosize_openpyxl_column(zs, 0)
+        # Not all columns: right-justification would make numbers invisible in
+        # the presence of some long text. But we can make the date/time
+        # plainer:
+        zs.column_dimensions["B"].width = 20
+        bold_first_row(zs)
+        bold_cell(zs["A9"])
+        bold_cell(zs["A17"])
 
         # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         # Problem definition
         # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-        self.problem.write_to_xlsx_workbook(wb)
+        self.problem.write_to_xlsx_workbook(wb, with_internal_prefs=True)
 
         wb.save(filename)
         wb.close()
@@ -568,12 +670,11 @@ class Solution(object):
             writer = csv.writer(file)
             writer.writerow(
                 [
-                    "Student number",
-                    "Student name",
-                    "Project number",
-                    "Project name",
-                    "Student's rank of allocated project"
-                    " (dissatisfaction score)",
+                    CsvHeadings.STUDENT_NUMBER,
+                    CsvHeadings.STUDENT_NAME,
+                    CsvHeadings.PROJECT_NUMBER,
+                    CsvHeadings.PROJECT_NAME,
+                    CsvHeadings.DISSATISFACTION_SCORE,
                 ]
             )
             for student, project in self._gen_student_project_pairs():

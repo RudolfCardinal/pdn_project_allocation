@@ -42,6 +42,7 @@ from pdn_project_allocation.preferences import Preferences
 
 if TYPE_CHECKING:
     from pdn_project_allocation.project import Project
+    from pdn_project_allocation.supervisor import Supervisor
 
 log = logging.getLogger(__name__)
 
@@ -51,7 +52,7 @@ log = logging.getLogger(__name__)
 # =============================================================================
 
 
-class Student(object):
+class Student:
     """
     Represents a single student, with their preferences.
     """
@@ -65,6 +66,7 @@ class Student(object):
         allow_ties: bool = False,
         preference_power: float = DEFAULT_PREFERENCE_POWER,
         input_rank_notation: RankNotation = DEFAULT_RANK_NOTATION,
+        preferred_amongst_unranked: List["Project"] = None,
     ) -> None:
         """
         Args:
@@ -83,6 +85,10 @@ class Student(object):
                 Power (exponent) to raise preferences to.
             input_rank_notation:
                 Notation for input ranks (see RankNotation).
+            preferred_amongst_unranked:
+                If applicable (see config.assume_supervisor_affinity), a list
+                of assumed-more-preferred projects among those the student did
+                not explicitly rank.
         """
         self.name = name
         self.number = number
@@ -94,6 +100,7 @@ class Student(object):
                 allow_ties=allow_ties,
                 preference_power=preference_power,
                 input_rank_notation=input_rank_notation,
+                preferred_amongst_unranked=preferred_amongst_unranked,
             )
         except ValueError as exc:
             raise ValueError(
@@ -104,7 +111,7 @@ class Student(object):
         """
         String representation.
         """
-        return f"{self.name} (St#{self.number})"
+        return f"{self.name!r} (St#{self.number})"
 
     def __repr__(self) -> str:
         return auto_repr(self)
@@ -119,7 +126,7 @@ class Student(object):
         """
         Name and number.
         """
-        return f"{self.name} (St#{self.number})"
+        return f"{self.name!r} (St#{self.number})"
 
     def __lt__(self, other: "Student") -> bool:
         """
@@ -145,6 +152,22 @@ class Student(object):
         Did the student explicitly rank this project?
         """
         return self.preferences.actively_expressed_preference_for(project)
+
+    def explicitly_ranked_any_supervisor(
+        self, supervisors: List["Supervisor"], all_projects: List["Project"]
+    ) -> bool:
+        """
+        Did the student explicitly rank any of the supervisors supervising this
+        project?
+        """
+        return any(
+            self.preferences.actively_expressed_preference_for(project)
+            for project in all_projects
+            if any(
+                project.is_supervised_by(supervisor)
+                for supervisor in supervisors
+            )
+        )
 
     def projects_in_descending_order(
         self, all_projects: List["Project"]

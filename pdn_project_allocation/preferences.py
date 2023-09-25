@@ -178,7 +178,7 @@ def convert_rank_notation(
 # =============================================================================
 
 
-class Preferences(object):
+class Preferences:
     """
     Represents preference as a mapping from arbitrary objects (being preferred)
     to ranks. Ranks are "dissatisfaction scores", in that the rank of 1 is
@@ -193,6 +193,7 @@ class Preferences(object):
         allow_ties: bool = False,
         preference_power: float = DEFAULT_PREFERENCE_POWER,
         input_rank_notation: RankNotation = DEFAULT_RANK_NOTATION,
+        preferred_amongst_unranked: List[Any] = None,
     ) -> None:
         """
         Args:
@@ -211,6 +212,9 @@ class Preferences(object):
                 Power (exponent) to raise preferences to.
             input_rank_notation:
                 Notation for input ranks (see RankNotation).
+            preferred_amongst_unranked:
+                Used for '--assume_supervisor_affinity': give higher implicit
+                preference to this set (equally) amongst the unranked items.
 
         Other attributes:
         - ``available_dissatisfaction``: sum of [1 ... ``n_options`]
@@ -231,6 +235,7 @@ class Preferences(object):
         self._allocated_dissatisfaction = 0
         self._allow_ties = allow_ties
         self._preference_power = preference_power
+        self._preferred_amongst_unranked = preferred_amongst_unranked or []
 
         if not preferences:
             return
@@ -265,17 +270,29 @@ class Preferences(object):
         String representation.
         """
         parts = ", ".join(f"{k} → {v}" for k, v in self._preferences.items())
+        middle = ""
+        if len(self._preferred_amongst_unranked):
+            middle = (
+                f"implicitly preferred items "
+                f"{self._preferred_amongst_unranked} score "
+                f"{self._unranked_item_dissatisfaction_a}; "
+            )
         return (
             f"Preferences({parts}; "
-            f"unranked options score {self._unranked_item_dissatisfaction})"
+            f"{middle}"
+            f"unranked options score {self._unranked_item_dissatisfaction_b})"
         )
 
     def __repr__(self) -> str:
+        middle = ""
+        if len(self._preferred_amongst_unranked):
+            middle = f"; implicit={self._preferred_amongst_unranked}"
         return (
             "{"
             + ", ".join(
                 f"{str(k)}: {str(v)}" for k, v in self._preferences.items()
             )
+            + middle
             + "}"
         )
 
@@ -355,41 +372,89 @@ class Preferences(object):
             f"(for {self._n_options} options)"
         )
 
-    @property
-    def _unallocated_dissatisfaction(self) -> int:
-        """
-        The amount of available "dissatisfaction", not yet allocated to an
-        item (see :class:`Preferences`).
-        """
-        return self._total_dissatisfaction - self._allocated_dissatisfaction
+        preferred_and_unpreferred = set(
+            self._preferred_amongst_unranked
+        ).intersection(set(self._preferences.keys()))
+        if preferred_and_unpreferred:
+            raise ValueError(
+                f"Some items are explicitly preferred (via 'preferences') and "
+                f"simultaneously unpreferred (via "
+                f"'preferred_amongst_unranked'); this is logically "
+                f"incoherent. Those items are: {preferred_and_unpreferred}"
+            )
 
     @property
-    def _unranked_item_dissatisfaction(self) -> Optional[float]:
+    def _unallocated_dissatisfaction_a(self) -> int:
+        """
+        The amount of available "dissatisfaction", not yet allocated to an
+        item (see :class:`Preferences`), available for any "implicitly more
+        preferred but unranked" items.
+        """
+        n_implicit = len(self._preferred_amongst_unranked)
+        if n_implicit == 0:
+            return 0
+        n_expressed = len(self._preferences)
+        return sum_of_integers_in_inclusive_range(
+            n_expressed + 1, n_expressed + n_implicit
+        )
+
+    @property
+    def _unallocated_dissatisfaction_b(self) -> int:
+        """
+        The amount of available "dissatisfaction", not yet allocated to an
+        item (see :class:`Preferences`), for "all the rest".
+        """
+        return (
+            self._total_dissatisfaction
+            - self._allocated_dissatisfaction
+            - self._unallocated_dissatisfaction_a
+        )
+
+    @property
+    def _unranked_item_dissatisfaction_a(self) -> Optional[float]:
         """
         The mean "dissatisfaction" (see :class:`Preferences`) for every option
-        without an explicit preference, or ``None`` if there are no such
-        options.
+        without an explicit preference but implicitly preferred, or ``None`` if
+        there are no such options.
         """
-        n_unranked = self._n_options - len(self._preferences)
-        return (
-            self._unallocated_dissatisfaction / n_unranked
-            if n_unranked > 0
-            else None
+        n_middle = len(self._preferred_amongst_unranked)
+        if n_middle == 0:
+            return None
+        return self._unallocated_dissatisfaction_a / n_middle
+
+    @property
+    def _unranked_item_dissatisfaction_b(self) -> Optional[float]:
+        """
+        The mean "dissatisfaction" (see :class:`Preferences`) for every option
+        without an explicit or implicit preference, or ``None`` if there are no
+        such options.
+        """
+        n_unranked = (
+            self._n_options
+            - len(self._preferences)
+            - len(self._preferred_amongst_unranked)
         )
+        if n_unranked == 0:
+            return None
+        return self._unallocated_dissatisfaction_b / n_unranked
 
     def preference(self, item: Any) -> Union[int, float]:
         """
         Returns a numerical preference score for an item. Will use the
         "unranked" item dissatisfaction if no preference has been expressed for
-        this particular item.
-
-        Raises the raw preference score to ``preference_power`` (by default 1).
+        this particular item (also taking into account any implicitly preferred
+        items).
 
         Args:
             item:
                 The item to look up.
         """
-        return self._preferences.get(item, self._unranked_item_dissatisfaction)
+        if item in self._preferences:
+            return self._preferences[item]
+        elif item in self._preferred_amongst_unranked:
+            return self._unranked_item_dissatisfaction_a
+        else:
+            return self._unranked_item_dissatisfaction_b
 
     def exponentiated_preference(self, item: Any) -> Union[int, float]:
         """

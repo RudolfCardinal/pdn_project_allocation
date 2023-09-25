@@ -43,7 +43,7 @@ log = logging.getLogger(__name__)
 # =============================================================================
 
 
-class Eligibility(object):
+class Eligibility:
     """
     Simple wrapper around a map between students and projects.
     """

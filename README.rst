@@ -487,7 +487,26 @@ Changelog
 
   - Project short titles, used as column headings.
 
-- 2022-22-09, v1.5.0:
+- 2022-09-22, v1.5.0:
 
   - Support competition and dense rankings as input formats (but retaining
     fractional rankings for calculation and output).
+
+- 2023-09-25, v1.6.0:
+
+  - Report more spreadsheet errors before stopping, to aid users.
+  - Some related error-checking improvements.
+  - Improved explanatory output, including
+
+    - explicitly showing students not allocated projects they asked for (+/-
+      supervisors likewise as a potential fallback);
+    - numbers allocated to supervisors;
+    - project "popularity" rankings;
+    - students who asked for projects they were ineligible for;
+    - preference scores used internally (including those implicitly calculated);
+    - cosmetic improvements.
+
+  - The option to assume that, among projects students did not explicitly rank
+    (why not let them rank more?), students prefer projects by supervisors they
+    did prefer to other projects ("same supervisor, another project"). This is
+    the ``--assume_supervisor_affinity`` option.

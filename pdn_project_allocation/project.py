@@ -51,7 +51,7 @@ log = logging.getLogger(__name__)
 # =============================================================================
 
 
-class Project(object):
+class Project:
     """
     Simple representation of a project.
     """
@@ -95,7 +95,7 @@ class Project(object):
         """
         String representation.
         """
-        return f"{self.title} (P#{self.number})"
+        return f"{self.title!r} (P#{self.number})"
 
     def __repr__(self) -> str:
         return auto_repr(self)

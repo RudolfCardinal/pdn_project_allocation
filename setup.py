@@ -66,6 +66,7 @@ setup(
         "openpyxl==3.0.10",
         "lxml==4.9.1",  # Will speed up openpyxl export
         "rich-argparse==0.5.0",  # colourful help
+        "scipy==1.10.1",  # used by others, but also for rankdata
         # -------------------------------------------------------------------------
         # For development:
         # -------------------------------------------------------------------------

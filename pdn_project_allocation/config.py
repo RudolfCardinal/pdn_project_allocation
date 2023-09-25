@@ -46,7 +46,7 @@ from pdn_project_allocation.constants import (
 # =============================================================================
 
 
-class Config(object):
+class Config:
     """
     Master config object.
     """
@@ -66,6 +66,7 @@ class Config(object):
         preference_power: float = DEFAULT_PREFERENCE_POWER,
         input_rank_notation: RankNotation = DEFAULT_RANK_NOTATION,
         student_must_have_choice: bool = False,
+        assume_supervisor_affinity: bool = False,
         supervisor_weight: float = DEFAULT_SUPERVISOR_WEIGHT,
     ) -> None:
         """
@@ -103,6 +104,11 @@ class Config(object):
             student_must_have_choice:
                 Prevent students being allocated to projects they've not
                 explicitly ranked?
+            assume_supervisor_affinity:
+                Among projects that students did not explicitly rank (but: why
+                not let them rank more?), assume that students prefer (equally)
+                projects by supervisors they did prefer, to projects by other
+                supervisors.
             supervisor_weight:
                 Weight allocated to supervisor preferences; range [0, 1].
                 (Student preferences are weighted as 1 minus this.)
@@ -112,7 +118,7 @@ class Config(object):
         self.allow_defunct_projects = allow_defunct_projects
         self.allow_student_preference_ties = allow_student_preference_ties
         self.allow_supervisor_preference_ties = (
-            allow_supervisor_preference_ties  # noqa
+            allow_supervisor_preference_ties
         )
         self.debug_model = debug_model
         self.max_time_s = max_time_s
@@ -122,9 +128,19 @@ class Config(object):
         self.preference_power = preference_power
         self.input_rank_notation = input_rank_notation
         self.student_must_have_choice = student_must_have_choice
+        self.assume_supervisor_affinity = assume_supervisor_affinity
         self.supervisor_weight = supervisor_weight
 
         self.cmd_args = cmd_args
+
+        if student_must_have_choice and assume_supervisor_affinity:
+            raise ValueError(
+                "Cannot use 'student_must_have_choice' (which requires every "
+                "student to get a project they explicitly chose, at the "
+                "potential cost of an unstable solution) with "
+                "'assume_supervisor_affinity' (which assumes that students "
+                "may get projects that they did not explicitly choose)."
+            )
 
     def __str__(self) -> str:
         return str(self.cmd_args)

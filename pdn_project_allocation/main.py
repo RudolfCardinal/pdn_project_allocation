@@ -60,6 +60,7 @@ from pdn_project_allocation.constants import (
     RNG_SEED,
     SheetHeadings,
     SheetNames,
+    Switches,
     TRUE_VALUES,
 )
 from pdn_project_allocation.problem import Problem
@@ -148,7 +149,8 @@ first row is the title row):
         projects. If absent, all students are eligible for all projects.
         Use {TRUE_VALUES} for "eligible".
         Use {FALSE_VALUES} for "ineligible".
-        Use --missing_eligibility to control the handling of empty cells.
+        Use {Switches.MISSING_ELIGIBILITY} to control the handling of empty
+        cells.
     Format:
         <ignored>       Project One     Project Two     Project Three   ...
         Miss Smith      1               1               1               ...
@@ -206,7 +208,7 @@ first row is the title row):
         "(e.g. 2.5 for joint second/third place)?",
     )
     data_group.add_argument(
-        "--missing_eligibility",
+        Switches.MISSING_ELIGIBILITY,
         dest="missing_eligibility",
         type=lambda x: bool(distutils.util.strtobool(x)),
         default=None,
@@ -253,7 +255,15 @@ first row is the title row):
         "--student_must_have_choice",
         action="store_true",
         help="Prevent students being allocated to projects they've not "
-        "explicitly ranked?",
+        "explicitly ranked? May generate an unstable solution.",
+    )
+    method_group.add_argument(
+        "--assume_supervisor_affinity",
+        action="store_true",
+        help="Among projects that students did not explicitly rank (but: why "
+        "not let them rank more?), assume that students prefer (equally) "
+        "projects by supervisors they did prefer, to projects by other "
+        "supervisors. (Incompatible with --student_must_have_choice.)",
     )
     method_k, method_desc = keys_descriptions_from_enum(
         OptimizeMethod, keys_to_lower=True
@@ -324,6 +334,7 @@ first row is the title row):
         preference_power=args.preference_power,
         input_rank_notation=RankNotation[args.input_rank_notation],
         student_must_have_choice=args.student_must_have_choice,
+        assume_supervisor_affinity=args.assume_supervisor_affinity,
         supervisor_weight=args.supervisor_weight,
     )
     log.info(f"Command: {cmdline_quote(sys.argv)}")

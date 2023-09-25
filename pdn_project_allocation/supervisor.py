@@ -36,7 +36,7 @@ from cardinal_pythonlib.reprfunc import auto_repr
 # =============================================================================
 
 
-class Supervisor(object):
+class Supervisor:
     """
     Simple representation of a supervisor.
     """

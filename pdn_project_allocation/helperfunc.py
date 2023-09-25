@@ -33,11 +33,14 @@ import logging
 from typing import Any, List, Sequence
 
 from openpyxl.cell import Cell
+from openpyxl.styles import Font
 from openpyxl.utils import get_column_letter
 from openpyxl.workbook.workbook import Workbook
 from openpyxl.worksheet.worksheet import Worksheet
 from mip import Constr, Model, Var
 from mip.exceptions import SolutionNotAvailable
+
+from pdn_project_allocation.constants import DEFAULT_FONT
 
 log = logging.getLogger(__name__)
 
@@ -180,3 +183,22 @@ def autosize_openpyxl_columns_all_sheets(wb: Workbook) -> None:
     for sheet_name in wb.sheetnames:
         ws = wb[sheet_name]
         autosize_openpyxl_worksheet_columns(ws)
+
+
+def bold_cell(cell: Cell) -> None:
+    """
+    Make cell bold.
+    """
+    cell.font = Font(name=DEFAULT_FONT, bold=True)
+
+
+def bold_first_row(ws: Worksheet) -> None:
+    """
+    Make first row (containing headings) bold.
+    """
+    try:
+        row = next(ws.rows)
+    except StopIteration:
+        return
+    for cell in row:
+        bold_cell(cell)

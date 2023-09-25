@@ -54,17 +54,15 @@ TRUE_VALUES = [1, "Y", "y", "T", "t"]
 FALSE_VALUES = [0, "N", "n", "F", "f"]
 MISSING_VALUES = ["", None]
 
-
-# =============================================================================
-# Enum classes
-# =============================================================================
+DEFAULT_FONT = "Calibri"
 
 
-class SheetNames(object):
+class SheetNames:
     """
     Sheet names within the input/output spreadsheet file.
     """
 
+    APPLIED_BUT_INELIGIBLE = "Applied_but_ineligible"
     ELIGIBILITY = "Eligibility"
     INFORMATION = "Information"  # output
     PROJECT_POPULARITY = "Project_popularity"  # output
@@ -72,19 +70,70 @@ class SheetNames(object):
     PROJECTS = "Projects"  # input, output
     STUDENT_ALLOCATIONS = "Student_allocations"  # output
     STUDENT_PREFERENCES = "Student_preferences"  # input, output
+    STUDENT_PREFERENCES_INTERNAL = "Student_preferences_internal"  # output
+    SUPERVISOR_PREFERENCES_INTERNAL = "Supervisor_preferences_internal"  # out
+    SUPERVISOR_ALLOCATIONS = "Supervisor_allocations"  # output
     SUPERVISORS = "Supervisors"  # input, output
     SUPERVISOR_PREFERENCES = "Supervisor_preferences"  # input, output
 
 
-class SheetHeadings(object):
+class SheetHeadings:
     """
-    Column headings within the input spreadsheet.
+    Column headings within the input/output spreadsheets.
     """
 
+    # Input:
     MAX_NUMBER_OF_PROJECTS = "Max_number_of_projects"
     MAX_NUMBER_OF_STUDENTS = "Max_number_of_students"
     PROJECT = "Project"
     SUPERVISOR = "Supervisor"
+
+    # Additional for output:
+    STUDENT = "Student"
+    STUDENTS = "Student(s)"
+    STUDENT_PREFERENCE = "Student_preference_rank"
+    ELIGIBLE = "Eligible"
+    N_STUDENTS_ALLOCATED = "N_students_allocated"
+    N_PROJECTS_ALLOCATED = "N_projects_allocated"
+    NOT_PREFERRED_PROJECT = "Project_not_preferred"
+    NOT_PREFERRED_SUPERVISOR = "Supervisor_not_preferred"
+
+
+class CsvHeadings:
+    """
+    Equivalently for simple CSV output.
+    """
+
+    STUDENT_NUMBER = "Student_number"
+    STUDENT_NAME = "Student_name"
+    PROJECT_NUMBER = "Project_number"
+    PROJECT_NAME = "Project_name"
+    DISSATISFACTION_SCORE = (
+        "Students_rank_of_allocated_project_dissatisfaction_score"
+    )
+
+
+class SheetText:
+    """
+    Text used within some summary spreadsheets.
+    """
+
+    STUDENT_HAPPY = ""
+    STUDENT_UNHAPPY_PROJECT = "Not a preferred project"
+    STUDENT_UNHAPPY_SUPERVISOR = "Not a preferred supervisor"
+
+
+class Switches:
+    """
+    Some switches are referred to in many places.
+    """
+
+    MISSING_ELIGIBILITY = "--missing_eligibility"
+
+
+# =============================================================================
+# Enum classes
+# =============================================================================
 
 
 class RankNotation(Enum, metaclass=CaseInsensitiveEnumMeta):
@@ -99,6 +148,10 @@ class RankNotation(Enum, metaclass=CaseInsensitiveEnumMeta):
 
 
 class OptimizeMethod(Enum, metaclass=CaseInsensitiveEnumMeta):
+    """
+    Ways to solve our core problem mathematically.
+    """
+
     MINIMIZE_DISSATISFACTION = (
         "Minimize weighted dissatisfaction "
         '(not necessarily requiring stable "marriages")'
@@ -120,9 +173,13 @@ class OptimizeMethod(Enum, metaclass=CaseInsensitiveEnumMeta):
         "(as for MINIMIZE_DISSATISFACTION_STABLE), but falling back to "
         "unstable if not."
     )
-    ABRAHAM_STUDENT = "Abraham-Irving-Manlove 2007 (optimal for students)"
+    ABRAHAM_STUDENT = (
+        "Abraham-Irving-Manlove 2007 (optimal for students); will not "
+        "necessarily provide a solution"
+    )
     ABRAHAM_SUPERVISOR = (
-        "Abraham-Irving-Manlove 2007 (optimal for supervisors)"
+        "Abraham-Irving-Manlove 2007 (optimal for supervisors); will not "
+        "necessarily provide a solution"
     )
 
 
