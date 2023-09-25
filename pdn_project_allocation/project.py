@@ -136,7 +136,7 @@ class Project(object):
                 preference_power=preference_power,
                 input_rank_notation=input_rank_notation,
             )
-        except ValueError as exc:
+        except (KeyError, ValueError) as exc:
             raise ValueError(
                 f"Error processing preferences for project: {self.title}: "
                 f"{exc}"

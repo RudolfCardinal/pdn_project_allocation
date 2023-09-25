@@ -119,7 +119,7 @@ def convert_rank_notation(
             )
 
     else:
-        raise AssertionError(f"Bad RankNotation: src = {src!r}")
+        raise AssertionError(f"Bug; bad RankNotation: src = {src!r}")
 
     # Check intermediate is OK.
     s = sum(fractional)
@@ -229,7 +229,12 @@ class Preferences(object):
         # Convert rank notation to fractional standard.
         # Deal with the fact that some ranks may be None by creating a map
         # from old to new ranks.
-        old_ranks = list(filter(None, preferences.values()))
+        #
+        # Don't use filter(None, ...), as that also removes 0 -- which is a
+        # dubious value we should catch. Also, it doesn't match the other check
+        # below when iterating preferences.items(), so gave KeyError exceptions
+        # relating to 0 as a key.
+        old_ranks = [v for v in preferences.values() if v is not None]
         new_ranks = convert_rank_notation(
             old_ranks,
             src=input_rank_notation,

@@ -702,10 +702,10 @@ class Problem(object):
                     input_rank_notation=config.input_rank_notation,
                 )
                 students.append(new_student)
-            except ValueError as exc:
+            except Exception as exc:
                 cls._assert(
                     False,
-                    str(exc),
+                    repr(exc),
                     errors_so_far=errors_so_far,
                     proceed_if_error=True,
                 )
@@ -770,6 +770,7 @@ class Problem(object):
                 f"rows for students). Yours has {len(svp_rows)}."
             ),
         )
+        # noinspection DuplicatedCode
         _sn_from_sheet = [
             svp_rows[i + 1][0].strip() for i in range(n_students)
         ]
@@ -811,10 +812,10 @@ class Problem(object):
                         preference_power=config.preference_power,
                         input_rank_notation=config.input_rank_notation,
                     )
-                except ValueError as exc:
+                except Exception as exc:
                     cls._assert(
                         False,
-                        str(exc),
+                        repr(exc),
                         errors_so_far=errors_so_far,
                         proceed_if_error=True,
                     )
@@ -862,6 +863,7 @@ class Problem(object):
                 ),
             )
         # Check student names
+        # noinspection DuplicatedCode
         _sn_from_sheet = [el_rows[i + 1][0].strip() for i in range(n_students)]
         _sn_from_students = [
             students[i].name for i in range(n_students)
