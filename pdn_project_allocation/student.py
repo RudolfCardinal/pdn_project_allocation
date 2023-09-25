@@ -95,9 +95,10 @@ class Student(object):
                 preference_power=preference_power,
                 input_rank_notation=input_rank_notation,
             )
-        except ValueError:
-            log.critical(f"Error processing preferences for student: {name}")
-            raise
+        except ValueError as exc:
+            raise ValueError(
+                f"Error processing preferences for student: {name}: {exc}"
+            )
 
     def __str__(self) -> str:
         """

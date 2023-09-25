@@ -136,11 +136,11 @@ class Project(object):
                 preference_power=preference_power,
                 input_rank_notation=input_rank_notation,
             )
-        except ValueError:
-            log.critical(
-                f"Error processing preferences for project: {self.title}"
+        except ValueError as exc:
+            raise ValueError(
+                f"Error processing preferences for project: {self.title}: "
+                f"{exc}"
             )
-            raise
 
     def dissatisfaction(self, student: Student) -> float:
         """
@@ -149,11 +149,11 @@ class Project(object):
         """
         return self.supervisor_preferences.preference(student)
 
-    def exponentiated_dissatisfaction(self, project: "Project") -> float:
+    def exponentiated_dissatisfaction(self, student: Student) -> float:
         """
         As for :meth:`dissatisfaction`, but raised to the desired power.
         """
-        return self.supervisor_preferences.exponentiated_preference(project)
+        return self.supervisor_preferences.exponentiated_preference(student)
 
     def students_in_descending_order(
         self, all_students: List[Student]

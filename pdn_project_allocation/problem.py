@@ -227,15 +227,12 @@ class Problem(object):
             for p in s.preferences.items_explicitly_ranked():
                 yield s, p
 
-    def is_student_interested(
-        self, student: Student, project: Project
-    ) -> bool:
+    @staticmethod
+    def is_student_interested(student: Student, project: Project) -> bool:
         """
-        Is the student interested in this project?
+        UNUSED. Is the student interested in this project?
         """
-        return self.students[student].actively_expressed_preference_for(
-            project
-        )
+        return student.preferences.actively_expressed_preference_for(project)
 
     def are_preferences_strict_over_relevant_combos(self) -> bool:
         """
@@ -325,19 +322,6 @@ class Problem(object):
         Reads a :class:`Problem` from an Excel XLSX file.
         """
 
-        def get_pref_val(x_: Any) -> Union[int, float, None]:
-            """
-            Raises ValueError if it's not a preference quantity.
-            """
-            if x_ is None:
-                return None
-            if isinstance(x_, str) and not x_.strip():
-                # Empty string or string containing spaces.
-                return None
-            if isinstance(x_, (int, float)):
-                return x_
-            raise ValueError(f"Bad preference: {x_!r}")
-
         log.info(f"Reading XLSX file: {config.filename}")
         wb = load_workbook(
             config.filename,
@@ -346,11 +330,72 @@ class Problem(object):
             data_only=True,
             keep_links=False,
         )
+        supervisors, sv_name_to_supervisor = cls._read_supervisors(wb)
+        projects = cls._read_projects(wb, config, sv_name_to_supervisor)
+        students = cls._read_students(wb, config, projects)
+        cls._read_supervisor_preferences(wb, config, projects, students)
+        eligibility = cls._read_eligibility(wb, config, projects, students)
+        wb.close()
+        log.info("... finished reading")
 
-        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-        # Supervisors
-        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        # Create and return the Problem object
+        return Problem(
+            supervisors=supervisors,
+            projects=projects,
+            students=students,
+            eligibility=eligibility,
+            config=config,
+        )
 
+    @classmethod
+    def _assert(
+        cls,
+        assertion: Any,
+        error_msg: str,
+        errors_so_far: List[str] = None,
+        proceed_if_error: bool = False,
+    ) -> bool:
+        """
+        Check an assertion, return "ok?" as a Boolean, or raise ValueError.
+        Provides the facility to collect several errors, for user helpfulness
+        ("fix these five problems", rather than "here's the first problem, come
+        back when it's fixed; here's the next problem...").
+        """
+        if bool(assertion):
+            return True
+        if errors_so_far is not None:
+            errors_so_far.append(error_msg)
+        if proceed_if_error:
+            assert (
+                errors_so_far is not None
+            ), "Bug: must provide errors_so_far if using proceed_if_error"
+            return False
+        else:
+            exception_text = (
+                "\n".join(errors_so_far)
+                if errors_so_far is not None
+                else error_msg
+            )
+            log.critical(exception_text)
+            raise ValueError(exception_text)
+
+    @classmethod
+    def _complete_assertions(cls, errors_so_far, context: str = "") -> None:
+        """
+        If there are errors, raise ValueError.
+        """
+        if errors_so_far:
+            msg = f"Errors in context: {context}\n" + "\n".join(errors_so_far)
+            log.critical(msg)
+            raise ValueError(msg)
+
+    @classmethod
+    def _read_supervisors(
+        cls, wb: Workbook
+    ) -> Tuple[List[Supervisor], Dict[str, Supervisor]]:
+        """
+        Read supervisors from a spreadsheet.
+        """
         log.info("... reading supervisors...")
         supervisors = []  # type: List[Supervisor]
         sv_name_to_supervisor = {}  # type: Dict[str, Supervisor]
@@ -362,32 +407,68 @@ class Problem(object):
             SheetHeadings.MAX_NUMBER_OF_STUDENTS,
         ]
         obtained_headings = [c.value for c in ws_supervisors["A1:C1"][0]]
-        assert obtained_headings == expected_headings, (
-            f"Bad headings to worksheet {SheetNames.SUPERVISORS}; expected "
-            f"{expected_headings!r}, got {obtained_headings!r}"
+        cls._assert(
+            obtained_headings == expected_headings,
+            (
+                f"Bad headings to worksheet {SheetNames.SUPERVISORS}; "
+                f"expected {expected_headings!r}, got {obtained_headings!r}"
+            ),
         )
+        errors_so_far = []  # type: List[str]
         sv_rows = read_until_empty_row(ws_supervisors)
         for row_number, row in enumerate(sv_rows[1:], start=2):
             supervisor_number = row_number - 1
             supervisor_name = row[0].strip()
-            assert supervisor_name, (
-                f"Missing supervisor name in {SheetNames.SUPERVISORS} "
-                f"row {row_number}"
+            ok = cls._assert(
+                supervisor_name,
+                (
+                    f"Missing supervisor name in {SheetNames.SUPERVISORS} "
+                    f"row {row_number}"
+                ),
+                errors_so_far=errors_so_far,
+                proceed_if_error=True,
             )
-            assert supervisor_name not in sv_name_to_supervisor, (
-                f"Duplicate supervisor name in {SheetNames.SUPERVISORS} "
-                f"row {row_number}: {supervisor_name!r}"
+            ok = (
+                cls._assert(
+                    supervisor_name not in sv_name_to_supervisor,
+                    (
+                        f"Duplicate supervisor name in "
+                        f"{SheetNames.SUPERVISORS} "
+                        f"row {row_number}: {supervisor_name!r}"
+                    ),
+                    errors_so_far=errors_so_far,
+                    proceed_if_error=True,
+                )
+                and ok
             )
             max_n_projects = row[1]
-            assert max_n_projects is None or isinstance(max_n_projects, int), (
-                f"Bad max_n_projects in {SheetNames.SUPERVISORS} "
-                f"row {row_number}; is {max_n_projects!r}"
+            ok = (
+                cls._assert(
+                    max_n_projects is None or isinstance(max_n_projects, int),
+                    (
+                        f"Bad max_n_projects in {SheetNames.SUPERVISORS} "
+                        f"row {row_number}; is {max_n_projects!r}"
+                    ),
+                    errors_so_far=errors_so_far,
+                    proceed_if_error=True,
+                )
+                and ok
             )
             max_n_students = row[2]
-            assert max_n_students is None or isinstance(max_n_students, int), (
-                f"Bad max_n_students in {SheetNames.SUPERVISORS} "
-                f"row {row_number}; is {max_n_students!r}"
+            ok = (
+                cls._assert(
+                    max_n_students is None or isinstance(max_n_students, int),
+                    (
+                        f"Bad max_n_students in {SheetNames.SUPERVISORS} "
+                        f"row {row_number}; is {max_n_students!r}"
+                    ),
+                    errors_so_far=errors_so_far,
+                    proceed_if_error=True,
+                )
+                and ok
             )
+            if not ok:
+                continue
             new_supervisor = Supervisor(
                 name=supervisor_name,
                 number=supervisor_number,
@@ -397,16 +478,25 @@ class Problem(object):
             sv_name_to_supervisor[supervisor_name] = new_supervisor
             supervisors.append(new_supervisor)
         n_supervisors = len(supervisors)
-        assert n_supervisors, "No supervisors defined!"
+        cls._assert(
+            n_supervisors,
+            "No supervisors defined!",
+            errors_so_far=errors_so_far,
+        )
+        cls._complete_assertions(errors_so_far, context=SheetNames.SUPERVISORS)
         log.info(f"Number of supervisors: {n_supervisors}")
-        del expected_headings, obtained_headings
-        del ws_supervisors, sv_rows, row_number, row, supervisor_number
-        del supervisor_name, max_n_projects, max_n_students, new_supervisor
+        return supervisors, sv_name_to_supervisor
 
-        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-        # Projects
-        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
+    @classmethod
+    def _read_projects(
+        cls,
+        wb: Workbook,
+        config: Config,
+        sv_name_to_supervisor: Dict[str, Supervisor],
+    ) -> List[Project]:
+        """
+        Read projects from a spreadsheet.
+        """
         log.info("... reading projects...")
         projects = []  # type: List[Project]
         ws_projects = wb[SheetNames.PROJECTS]  # type: Worksheet
@@ -417,37 +507,73 @@ class Problem(object):
             SheetHeadings.SUPERVISOR,
         ]
         obtained_headings = [c.value for c in ws_projects["A1:C1"][0]]
-        assert obtained_headings == expected_headings, (
-            f"Bad headings to worksheet {SheetNames.PROJECTS}; expected "
-            f"{expected_headings!r}, got {obtained_headings!r}"
+        cls._assert(
+            obtained_headings == expected_headings,
+            (
+                f"Bad headings to worksheet {SheetNames.PROJECTS}; expected "
+                f"{expected_headings!r}, got {obtained_headings!r}"
+            ),
         )
         # log.debug(f"Projects: max_row = {ws_projects.max_row}")
+        errors_so_far = []  # type: List[str]
         p_rows = read_until_empty_row(ws_projects)
         for row_number, row in enumerate(p_rows[1:], start=2):
             project_number = row_number - 1
             project_name = row[0].strip()
-            assert project_name, (
-                f"Missing project name in {SheetNames.PROJECTS} "
-                f"row {row_number}"
+            ok = cls._assert(
+                project_name,
+                (
+                    f"Missing project name in {SheetNames.PROJECTS} "
+                    f"row {row_number}"
+                ),
+                errors_so_far=errors_so_far,
+                proceed_if_error=True,
             )
-            assert project_name not in project_names, (
-                f"Duplicate project name in {SheetNames.PROJECTS} "
-                f"row {row_number}: {project_name!r}"
+            ok = (
+                cls._assert(
+                    project_name not in project_names,
+                    (
+                        f"Duplicate project name in {SheetNames.PROJECTS} "
+                        f"row {row_number}: {project_name!r}"
+                    ),
+                    errors_so_far=errors_so_far,
+                    proceed_if_error=True,
+                )
+                and ok
             )
             max_n_students = row[1]
-            assert isinstance(max_n_students, int), (
-                f"Bad max_n_students in {SheetNames.PROJECTS} "
-                f"row {row_number}; is {max_n_students!r}"
+            ok = (
+                cls._assert(
+                    isinstance(max_n_students, int),
+                    (
+                        f"Bad max_n_students in {SheetNames.PROJECTS} "
+                        f"row {row_number}; is {max_n_students!r}"
+                    ),
+                    errors_so_far=errors_so_far,
+                    proceed_if_error=True,
+                )
+                and ok
             )
             supervisor_names = csv_to_supervisor_names(row[2])
             this_project_supervisors = []
             for sv_name in supervisor_names:
-                assert sv_name in sv_name_to_supervisor, (
-                    f"Unknown supervisor in {SheetNames.PROJECTS} "
-                    f"row {row_number}: {sv_name!r} (full cell is {row[2]!r})"
+                ok = (
+                    cls._assert(
+                        sv_name in sv_name_to_supervisor,
+                        (
+                            f"Unknown supervisor in {SheetNames.PROJECTS} "
+                            f"row {row_number}: {sv_name!r} "
+                            f"(full cell is {row[2]!r})"
+                        ),
+                        errors_so_far=errors_so_far,
+                        proceed_if_error=True,
+                    )
+                    and ok
                 )
                 this_project_supervisors.append(sv_name_to_supervisor[sv_name])
             project_names.append(project_name)
+            if not ok:
+                continue
             projects.append(
                 Project(
                     title=project_name,
@@ -458,17 +584,34 @@ class Problem(object):
                 )
             )
         n_projects = len(projects)
-        assert n_projects, "No projects defined!"
+        cls._assert(
+            n_projects, "No projects defined!", errors_so_far=errors_so_far
+        )
+        cls._complete_assertions(errors_so_far, context=SheetNames.PROJECTS)
         log.info(f"Number of projects: {n_projects}")
-        del expected_headings, obtained_headings
-        del ws_projects, p_rows, row_number, row, project_number, project_name
-        del max_n_students, supervisor_names, sv_name, project_names
-        del this_project_supervisors
+        return projects
 
-        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-        # Students with their preferences
-        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    @classmethod
+    def get_pref_val(cls, x_: Any) -> Union[int, float, None]:
+        """
+        Raises ValueError if it's not a preference quantity.
+        """
+        if x_ is None:
+            return None
+        if isinstance(x_, str) and not x_.strip():
+            # Empty string or string containing spaces.
+            return None
+        if isinstance(x_, (int, float)):
+            return x_
+        raise ValueError(f"Bad preference: {x_!r}")
 
+    @classmethod
+    def _read_students(
+        cls, wb: Workbook, config: Config, projects: List[Project]
+    ) -> List[Student]:
+        """
+        Read students and their preferences from a spreadsheet.
+        """
         log.info("... reading students and their preferences...")
         students = []  # type: List[Student]
         student_names = []  # type: List[str]
@@ -477,67 +620,114 @@ class Problem(object):
         ]  # type: Worksheet  # noqa
         stp_rows = read_until_empty_row(ws_students)
         # Check project headings
+        n_projects = len(projects)
         for i in range(n_projects):
-            assert stp_rows[0][i + 1].strip() == projects[i].title, (
-                f"First row of {SheetNames.STUDENT_PREFERENCES} sheet must "
-                f"contain all project names in the same order as in the "
-                f"{SheetNames.PROJECTS} sheet. For project {i + 1}, the "
-                f"project name is {projects[i].title!r}, but the column "
-                f"heading is {stp_rows[0][i + 1]!r}."
+            cls._assert(
+                stp_rows[0][i + 1].strip() == projects[i].title,
+                (
+                    f"First row of {SheetNames.STUDENT_PREFERENCES} sheet "
+                    f"must contain all project names in the same order as in "
+                    f"the {SheetNames.PROJECTS} sheet. For project {i + 1}, "
+                    f"the project name is {projects[i].title!r}, but the "
+                    f"column heading is {stp_rows[0][i + 1]!r}."
+                ),
             )
+        errors_so_far = []  # type: List[str]
         for row_number, row in enumerate(stp_rows[1:], start=2):
             student_number = row_number - 1
             student_name = row[0].strip()
-            assert len(row) == n_projects + 1, (
-                f"In {SheetNames.STUDENT_PREFERENCES}, student on row "
-                f"{row_number} (named {student_name!r}) has a preference row "
-                f"of the wrong length (expected {n_projects + 1}, got "
-                f"{len(row)})."
+            ok = cls._assert(
+                len(row) == n_projects + 1,
+                (
+                    f"In {SheetNames.STUDENT_PREFERENCES}, student on row "
+                    f"{row_number} (named {student_name!r}) has a preference "
+                    f"row of the wrong length (expected {n_projects + 1}, got "
+                    f"{len(row)})."
+                ),
             )
-            assert student_name not in student_names, (
-                f"Duplicate student name in {SheetNames.STUDENT_PREFERENCES} "
-                f"row {row_number}: {student_name!r}"
+            ok = (
+                cls._assert(
+                    student_name not in student_names,
+                    (
+                        f"Duplicate student name in "
+                        f"{SheetNames.STUDENT_PREFERENCES} "
+                        f"row {row_number}: {student_name!r}"
+                    ),
+                    errors_so_far=errors_so_far,
+                    proceed_if_error=True,
+                )
+                and ok
             )
             student_preferences = OrderedDict()  # type: Dict[Project, int]
             for project_number, pref_contents in enumerate(row[1:], start=1):
+                pref = None
                 try:
-                    pref = get_pref_val(pref_contents)  # may raise
+                    pref = cls.get_pref_val(pref_contents)  # may raise
                     if config.allow_student_preference_ties:
-                        ok = pref is None or isinstance(pref, float)
+                        pref_ok = pref is None or isinstance(pref, float)
                     else:
-                        ok = pref is None or isinstance(pref, int)
-                    if not ok:
+                        pref_ok = pref is None or isinstance(pref, int)
+                    if not pref_ok:
                         raise ValueError
                 except ValueError:
-                    raise ValueError(
-                        f"Bad preference for student {student_name} in "
-                        f"{SheetNames.STUDENT_PREFERENCES} "
-                        f"row {row_number}: {pref_contents!r}"
+                    ok = cls._assert(
+                        False,
+                        (
+                            f"Bad preference for student {student_name} in "
+                            f"{SheetNames.STUDENT_PREFERENCES} "
+                            f"row {row_number}: {pref_contents!r}"
+                        ),
+                        errors_so_far=errors_so_far,
+                        proceed_if_error=True,
                     )
                 project = projects[project_number - 1]
-                student_preferences[project] = pref
+                if pref is not None:
+                    student_preferences[project] = pref
             student_names.append(student_name)
-            new_student = Student(
-                name=student_name,
-                number=student_number,
-                preferences=student_preferences,
-                n_projects=n_projects,
-                allow_ties=config.allow_student_preference_ties,
-                preference_power=config.preference_power,
-                input_rank_notation=config.input_rank_notation,
-            )
-            students.append(new_student)
-        del ws_students, stp_rows, row_number, row, student_name, student_names
-        del student_preferences, project_number, pref_contents, pref
-        del ok, project, new_student
+            if not ok:
+                continue
+            try:
+                new_student = Student(
+                    name=student_name,
+                    number=student_number,
+                    preferences=student_preferences,
+                    n_projects=n_projects,
+                    allow_ties=config.allow_student_preference_ties,
+                    preference_power=config.preference_power,
+                    input_rank_notation=config.input_rank_notation,
+                )
+                students.append(new_student)
+            except ValueError as exc:
+                cls._assert(
+                    False,
+                    str(exc),
+                    errors_so_far=errors_so_far,
+                    proceed_if_error=True,
+                )
         n_students = len(students)
+        cls._assert(
+            n_students >= 1,
+            "No students defined!",
+            errors_so_far=errors_so_far,
+        )
+        cls._complete_assertions(
+            errors_so_far, context=SheetNames.STUDENT_PREFERENCES
+        )
         log.info(f"Number of students: {n_students}")
-        assert n_students >= 1
+        return students
 
-        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-        # Supervisor preferences, per project
-        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
+    @classmethod
+    def _read_supervisor_preferences(
+        cls,
+        wb: Workbook,
+        config: Config,
+        projects: List[Project],
+        students: List[Student],
+    ) -> None:
+        """
+        Read supervisor-provided per-project preferences (for students) from a
+        spreadsheet, writing them to the known projects.
+        """
         log.info("... reading supervisor preferences...")
         ws_supervisorprefs = wb[
             SheetNames.SUPERVISOR_PREFERENCES
@@ -551,65 +741,102 @@ class Problem(object):
         svp_rows = read_until_empty_row(ws_supervisorprefs)
         # ... index as : svp_rows[row_zero_based][column_zero_based]
 
+        n_projects = len(projects)
+        n_students = len(students)
+
         # Check project headings
-        assert len(svp_rows[0]) == 1 + n_projects, (
-            f"First row of {SheetNames.SUPERVISOR_PREFERENCES} should have "
-            f"{1 + n_projects} columns (one on the left for student names "
-            f"plus {n_projects} columns for projects). Yours has "
-            f"{len(svp_rows[0])}."
+        cls._assert(
+            len(svp_rows[0]) == 1 + n_projects,
+            (
+                f"First row of {SheetNames.SUPERVISOR_PREFERENCES} should "
+                f"have {1 + n_projects} columns (one on the left for student "
+                f"names plus {n_projects} columns for projects). Yours has "
+                f"{len(svp_rows[0])}."
+            ),
         )
         for i in range(n_projects):
-            assert svp_rows[0][i + 1].strip() == projects[i].title, (
-                f"First row of {SheetNames.SUPERVISOR_PREFERENCES} sheet "
-                f"must contain all project names in the same order as in the "
-                f"{SheetNames.PROJECTS} sheet. For project {i + 1}, the "
-                f"project name is {projects[i].title!r}, but the column "
-                f"heading is {svp_rows[0][i + 1]!r}."
+            cls._assert(
+                svp_rows[0][i + 1].strip() == projects[i].title,
+                (
+                    f"First row of {SheetNames.SUPERVISOR_PREFERENCES} sheet "
+                    f"must contain all project names in the same order as in "
+                    f"the {SheetNames.PROJECTS} sheet. For project {i + 1}, "
+                    f"the project name is {projects[i].title!r}, but the "
+                    f"column heading is {svp_rows[0][i + 1]!r}."
+                ),
             )
         # Check student names
-        assert len(svp_rows) == 1 + n_students, (
-            f"Sheet {SheetNames.SUPERVISOR_PREFERENCES} should have "
-            f"{1 + n_students} rows (one header row plus {n_students} "
-            f"rows for students). Yours has {len(svp_rows)}."
+        cls._assert(
+            len(svp_rows) == 1 + n_students,
+            (
+                f"Sheet {SheetNames.SUPERVISOR_PREFERENCES} should have "
+                f"{1 + n_students} rows (one header row plus {n_students} "
+                f"rows for students). Yours has {len(svp_rows)}."
+            ),
         )
         _sn_from_sheet = [
             svp_rows[i + 1][0].strip() for i in range(n_students)
         ]
         _sn_from_students = [students[i].name for i in range(n_students)]
-        assert _sn_from_sheet == _sn_from_students, (
-            f"First column of {SheetNames.SUPERVISOR_PREFERENCES} sheet "
-            f"must contain all student names in the same order as in the "
-            f"{SheetNames.STUDENT_PREFERENCES} sheet. Mismatch is: "
-            f"{mismatch(_sn_from_sheet, _sn_from_students)}"
+        cls._assert(
+            _sn_from_sheet == _sn_from_students,
+            (
+                f"First column of {SheetNames.SUPERVISOR_PREFERENCES} sheet "
+                f"must contain all student names in the same order as in the "
+                f"{SheetNames.STUDENT_PREFERENCES} sheet. Mismatch is: "
+                f"{mismatch(_sn_from_sheet, _sn_from_students)}"
+            ),
         )
         # Read preferences
+        errors_so_far = []  # type: List[str]
         for pcol, project in enumerate(projects, start=2):
             supervisor_prefs = OrderedDict()  # type: Dict[Student, int]
+            ok = True
             for srow, student in enumerate(students, start=2):
                 pref_contents = svp_rows[srow - 1][pcol - 1]
                 try:
-                    pref = get_pref_val(pref_contents)
+                    pref = cls.get_pref_val(pref_contents)
+                    supervisor_prefs[student] = pref
                 except ValueError:
-                    raise ValueError(
-                        f"Bad preference at row={srow}, col={pcol} in "
-                        f"{SheetNames.SUPERVISOR_PREFERENCES}: "
-                        f"{pref_contents!r}"
+                    ok = cls._assert(
+                        False,
+                        (
+                            f"Bad preference at row={srow}, col={pcol} in "
+                            f"{SheetNames.SUPERVISOR_PREFERENCES}: "
+                            f"{pref_contents!r}"
+                        ),
                     )
-                supervisor_prefs[student] = pref
-            project.set_supervisor_preferences(
-                n_students=n_students,
-                preferences=supervisor_prefs,
-                allow_ties=config.allow_supervisor_preference_ties,
-                preference_power=config.preference_power,
-                input_rank_notation=config.input_rank_notation,
-            )
-        del ws_supervisorprefs, svp_rows, _sn_from_sheet, _sn_from_students
-        del pcol, project, supervisor_prefs, srow, student, pref_contents, pref
+            if ok:
+                try:
+                    project.set_supervisor_preferences(
+                        n_students=n_students,
+                        preferences=supervisor_prefs,
+                        allow_ties=config.allow_supervisor_preference_ties,
+                        preference_power=config.preference_power,
+                        input_rank_notation=config.input_rank_notation,
+                    )
+                except ValueError as exc:
+                    cls._assert(
+                        False,
+                        str(exc),
+                        errors_so_far=errors_so_far,
+                        proceed_if_error=True,
+                    )
+        cls._complete_assertions(
+            errors_so_far, context=SheetNames.SUPERVISOR_PREFERENCES
+        )
 
-        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-        # Eligibility
-        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
+    @classmethod
+    def _read_eligibility(
+        cls,
+        wb: Workbook,
+        config: Config,
+        projects: List[Project],
+        students: List[Student],
+    ) -> Eligibility:
+        """
+        Read student eligibility for projects from a spreadsheet.
+        """
         log.info("... reading eligibility...")
         eligibility = Eligibility(
             students=students,
@@ -617,80 +844,84 @@ class Problem(object):
             default_eligibility=True,
             allow_defunct_projects=config.allow_defunct_projects,
         )
-        if SheetNames.ELIGIBILITY in wb:
-            ws_eligibility = wb[SheetNames.ELIGIBILITY]
-            el_rows = read_until_empty_row(ws_eligibility)
-            # ... index as : el_rows[row_zero_based][column_zero_based]
-            # Check project headings
-            for i in range(n_projects):
-                assert el_rows[0][i + 1].strip() == projects[i].title, (
+        if SheetNames.ELIGIBILITY not in wb:
+            # Not provided; we just use the default.
+            return eligibility
+
+        ws_eligibility = wb[SheetNames.ELIGIBILITY]
+        el_rows = read_until_empty_row(ws_eligibility)
+        # ... index as : el_rows[row_zero_based][column_zero_based]
+        n_projects = len(projects)
+        n_students = len(students)
+        # Check project headings
+        for i in range(n_projects):
+            cls._assert(
+                el_rows[0][i + 1].strip() == projects[i].title,
+                (
                     f"First row of {SheetNames.ELIGIBILITY} sheet must "
                     f"contain all project names in the same order as in the "
                     f"{SheetNames.PROJECTS} sheet. For project {i + 1}, "
                     f"project name is {projects[i].title!r}, but column "
                     f"heading is {el_rows[0][i + 1]!r}."
-                )
-            # Check student names
-            _sn_from_sheet = [
-                el_rows[i + 1][0].strip() for i in range(n_students)
-            ]
-            _sn_from_students = [
-                students[i].name for i in range(n_students)
-            ]  # noqa
-            assert _sn_from_sheet == _sn_from_students, (
+                ),
+            )
+        # Check student names
+        _sn_from_sheet = [el_rows[i + 1][0].strip() for i in range(n_students)]
+        _sn_from_students = [
+            students[i].name for i in range(n_students)
+        ]  # noqa
+        cls._assert(
+            _sn_from_sheet == _sn_from_students,
+            (
                 f"First column of {SheetNames.ELIGIBILITY} sheet "
                 f"must contain all student names in the same order as in the "
                 f"{SheetNames.STUDENT_PREFERENCES} sheet. Mismatch is: "
                 f"{mismatch(_sn_from_sheet, _sn_from_students)}"
-            )
-            # Read eligibility
-            for pcol, project in enumerate(projects, start=2):
-                for srow, student in enumerate(students, start=2):
-                    eligibility_val = el_rows[srow - 1][pcol - 1]
-                    if isinstance(eligibility_val, str):
-                        eligibility_val = eligibility_val.strip()
-                    if eligibility_val in TRUE_VALUES:
-                        eligible = True
-                    elif eligibility_val in FALSE_VALUES:
-                        eligible = False
-                    elif (
-                        eligibility_val in MISSING_VALUES
-                        and config.missing_eligibility is not None
-                    ):
-                        eligible = config.missing_eligibility
-                    else:
-                        raise ValueError(
-                            f"Eligibility value {eligibility_val!r} "
-                            f"(at row {srow}, column {pcol}) is "
-                            f"invalid; use one of {TRUE_VALUES} "
-                            f"for 'eligible', or one of {FALSE_VALUES} "
-                            f"for 'ineligible'. The meaning of "
+            ),
+        )
+        # Read eligibility
+        errors_so_far = []  # type: List[str]
+        for pcol, project in enumerate(projects, start=2):
+            for srow, student in enumerate(students, start=2):
+                ok = True
+                eligibility_val = el_rows[srow - 1][pcol - 1]
+                if isinstance(eligibility_val, str):
+                    eligibility_val = eligibility_val.strip()
+                if eligibility_val in TRUE_VALUES:
+                    eligible = True
+                elif eligibility_val in FALSE_VALUES:
+                    eligible = False
+                elif (
+                    eligibility_val in MISSING_VALUES
+                    and config.missing_eligibility is not None
+                ):
+                    eligible = config.missing_eligibility
+                else:
+                    ok = cls._assert(
+                        False,
+                        (
+                            f"Eligibility value {eligibility_val!r} (at row "
+                            f"{srow}, column {pcol}) is invalid; use one of "
+                            f"{TRUE_VALUES} for 'eligible', or one of "
+                            f"{FALSE_VALUES} for 'ineligible'. The meaning of "
                             f"{MISSING_VALUES} is configurable; see "
                             f"'--missing_eligibility'."
-                        )
-                    if (
-                        config.student_must_have_choice
-                        and not student.explicitly_ranked_project(project)
-                    ):
-                        eligible = False
-                    eligibility.set_eligibility(student, project, eligible)
-            del ws_eligibility, el_rows, _sn_from_sheet, _sn_from_students
-            del pcol, project, eligibility_val, eligible
-
-        wb.close()
-
-        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-        # Create and return the Problem object
-        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-        log.info("... finished reading")
-        return Problem(
-            supervisors=supervisors,
-            projects=projects,
-            students=students,
-            eligibility=eligibility,
-            config=config,
-        )
+                        ),
+                        errors_so_far=errors_so_far,
+                        proceed_if_error=True,
+                    )
+                    eligible = None
+                    # ... won't be used; just stops PyCharm complaining
+                if not ok:
+                    continue
+                if (
+                    config.student_must_have_choice
+                    and not student.explicitly_ranked_project(project)
+                ):
+                    eligible = False
+                eligibility.set_eligibility(student, project, eligible)
+        cls._complete_assertions(errors_so_far, context=SheetNames.ELIGIBILITY)
+        return eligibility
 
     # -------------------------------------------------------------------------
     # Save data
