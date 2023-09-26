@@ -503,7 +503,11 @@ Changelog
     - numbers allocated to supervisors;
     - project "popularity" rankings;
     - students who asked for projects they were ineligible for;
-    - preference scores used internally (including those implicitly calculated);
+    - preference scores used internally (including those implicitly
+      calculated);
+    - report on unallocated projects with capacity (whose supervisors also
+      have capacity);
+    - more detailed reporting on unstable marriages, if they exist;
     - cosmetic improvements.
 
   - The option to assume that, among projects students did not explicitly rank

@@ -252,7 +252,7 @@ first row is the title row):
         help="Power (exponent) to raise preferences by.",
     )
     method_group.add_argument(
-        "--student_must_have_choice",
+        Switches.STUDENT_MUST_HAVE_CHOICE,
         action="store_true",
         help="Prevent students being allocated to projects they've not "
         "explicitly ranked? May generate an unstable solution.",
@@ -263,7 +263,8 @@ first row is the title row):
         help="Among projects that students did not explicitly rank (but: why "
         "not let them rank more?), assume that students prefer (equally) "
         "projects by supervisors they did prefer, to projects by other "
-        "supervisors. (Incompatible with --student_must_have_choice.)",
+        "supervisors. (Incompatible with "
+        f"{Switches.STUDENT_MUST_HAVE_CHOICE}.)",
     )
     method_k, method_desc = keys_descriptions_from_enum(
         OptimizeMethod, keys_to_lower=True

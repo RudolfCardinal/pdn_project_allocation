@@ -90,6 +90,9 @@ class Project:
         self.supervisor_preferences = None  # type: Optional[Preferences]
         # ... the project supervisor's preferences for students with respect
         #     to THIS project.
+        self.original_order = -1
+        # ... we'll shuffle at some point but this is used to keep the
+        # original; written later.
 
     def __str__(self) -> str:
         """

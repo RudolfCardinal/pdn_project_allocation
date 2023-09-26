@@ -65,16 +65,17 @@ class SheetNames:
     APPLIED_BUT_INELIGIBLE = "Applied_but_ineligible"
     ELIGIBILITY = "Eligibility"
     INFORMATION = "Information"  # output
-    PROJECT_POPULARITY = "Project_popularity"  # output
     PROJECT_ALLOCATIONS = "Project_allocations"  # output
+    PROJECT_POPULARITY = "Project_popularity"  # output
     PROJECTS = "Projects"  # input, output
     STUDENT_ALLOCATIONS = "Student_allocations"  # output
     STUDENT_PREFERENCES = "Student_preferences"  # input, output
     STUDENT_PREFERENCES_INTERNAL = "Student_preferences_internal"  # output
-    SUPERVISOR_PREFERENCES_INTERNAL = "Supervisor_preferences_internal"  # out
     SUPERVISOR_ALLOCATIONS = "Supervisor_allocations"  # output
-    SUPERVISORS = "Supervisors"  # input, output
     SUPERVISOR_PREFERENCES = "Supervisor_preferences"  # input, output
+    SUPERVISOR_PREFERENCES_INTERNAL = "Supervisor_preferences_internal"  # out
+    SUPERVISORS = "Supervisors"  # input, output
+    UNALLOCATED_PROJECTS_WITH_CAPACITY = "Unallocated_projects_with_capacity"
 
 
 class SheetHeadings:
@@ -89,14 +90,14 @@ class SheetHeadings:
     SUPERVISOR = "Supervisor"
 
     # Additional for output:
-    STUDENT = "Student"
-    STUDENTS = "Student(s)"
-    STUDENT_PREFERENCE = "Student_preference_rank"
     ELIGIBLE = "Eligible"
-    N_STUDENTS_ALLOCATED = "N_students_allocated"
     N_PROJECTS_ALLOCATED = "N_projects_allocated"
+    N_STUDENTS_ALLOCATED = "N_students_allocated"
     NOT_PREFERRED_PROJECT = "Project_not_preferred"
     NOT_PREFERRED_SUPERVISOR = "Supervisor_not_preferred"
+    STUDENT = "Student"
+    STUDENT_PREFERENCE = "Student_preference_rank"
+    STUDENTS = "Student(s)"
 
 
 class CsvHeadings:
@@ -104,13 +105,13 @@ class CsvHeadings:
     Equivalently for simple CSV output.
     """
 
-    STUDENT_NUMBER = "Student_number"
-    STUDENT_NAME = "Student_name"
-    PROJECT_NUMBER = "Project_number"
-    PROJECT_NAME = "Project_name"
     DISSATISFACTION_SCORE = (
         "Students_rank_of_allocated_project_dissatisfaction_score"
     )
+    PROJECT_NAME = "Project_name"
+    PROJECT_NUMBER = "Project_number"
+    STUDENT_NAME = "Student_name"
+    STUDENT_NUMBER = "Student_number"
 
 
 class SheetText:
@@ -129,6 +130,7 @@ class Switches:
     """
 
     MISSING_ELIGIBILITY = "--missing_eligibility"
+    STUDENT_MUST_HAVE_CHOICE = "--student_must_have_choice"
 
 
 # =============================================================================

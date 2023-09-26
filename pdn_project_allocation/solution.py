@@ -184,6 +184,42 @@ class Solution:
             if project.is_supervised_by(supervisor)
         )
 
+    def unallocated_projects_with_capacity(self) -> List[Project]:
+        """
+        Unallocated projects that have capacity (and whose supervisors -- all
+        of the supervisors -- have capacity).
+        """
+        unalloc_projects = []  # type: List[Project]
+        for p in self.problem.projects:
+            if (
+                p.max_n_students is not None
+                and self.n_students_allocated_to_project(p) >= p.max_n_students
+            ):
+                # Project is full of students.
+                continue
+            if any(
+                self.n_students_allocated_to_supervisor(sup)
+                >= sup.max_n_students
+                for sup in p.supervisors
+                if sup.max_n_students is not None
+            ):
+                # At least one of the project's supervisors is full in terms of
+                # students.
+                continue
+            if self.n_students_allocated_to_project(p) == 0 and any(
+                self.n_projects_allocated_to_supervisor(sup)
+                >= sup.max_n_projects
+                for sup in p.supervisors
+                if sup.max_n_projects is not None
+            ):
+                # At least one of the supervisor can't add any more projects,
+                # and adding this project would add a project (i.e. project not
+                # already allocated to them).
+                continue
+            unalloc_projects.append(p)
+        unalloc_projects.sort(key=lambda p: p.original_order)
+        return unalloc_projects
+
     # -------------------------------------------------------------------------
     # Student dissatisfaction
     # -------------------------------------------------------------------------
@@ -317,43 +353,54 @@ class Solution:
 
     def stability(
         self, describe_all_failures: bool = True
-    ) -> Tuple[bool, str]:
+    ) -> Tuple[bool, List[str]]:
         """
         Is the solution a stable match, and if not, why not? See README.rst for
-        discussion. See also https://gist.github.com/joyrexus/9967709.
+        discussion. See also https://gist.github.com/joyrexus/9967709. If the
+        solution is stable, the ``reasons_for_instability`` return value is
+        a list containing a single string indicating stability.
 
         Arguments:
             describe_all_failures:
                 Show all reasons for failure.
 
         Returns:
-            tuple: (stable, reason_for_instability)
+            tuple: (stable, reasons_for_instability)
         """
         stable = True
         instability_reasons = []  # type: List[str]
         for student, project in self._gen_student_project_pairs():
             for alt_project in self.gen_better_projects(student, project):
-                for alt_proj_student in self.allocated_students(alt_project):
-                    if alt_proj_student == student:
+                for alt_student in self.allocated_students(alt_project):
+                    if alt_student == student:
                         continue
                     if student in self.gen_better_students(
-                        alt_project, alt_proj_student
+                        alt_project, alt_student
                     ):
+                        st_pref_proj = student.dissatisfaction(project)
+                        st_pref_altproj = student.dissatisfaction(alt_project)
+                        altproj_pref_st = alt_project.dissatisfaction(student)
+                        altproj_pref_altst = alt_project.dissatisfaction(
+                            alt_student
+                        )
                         instability_reasons.append(
                             f"Pairing of student {student} to project "
-                            f"{project} is unstable. "
-                            f"The student would rather have alternative "
-                            f"project {alt_project}, and that alternative "
-                            f"project would rather have {student} than their "
-                            f"current allocation of {alt_proj_student}."
+                            f"{project} is unstable. The student ranks this "
+                            f"project {st_pref_proj} but would rather have "
+                            f"alternative project {alt_project} (which they "
+                            f"ranked {st_pref_altproj}), and that alternative "
+                            f"project would rather have {student} (whom they "
+                            f"ranked {altproj_pref_st}) than their current "
+                            f"allocation of {alt_student} (whom they "
+                            f"ranked {altproj_pref_altst})."
                         )
                         stable = False
                         if not describe_all_failures:
-                            return False, "\n\n".join(instability_reasons)
+                            return False, instability_reasons
         if stable:
-            return True, "[Stable]"
+            return True, ["[Stable]"]
         else:
-            return False, "\n\n".join(instability_reasons)
+            return False, instability_reasons
 
     def is_stable(self) -> bool:
         """
@@ -542,10 +589,37 @@ class Solution:
         bold_first_row(ai)
 
         # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        # Unallocated projects with capacity
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+        up = wb.create_sheet(SheetNames.UNALLOCATED_PROJECTS_WITH_CAPACITY)
+        unalloc_projects = self.unallocated_projects_with_capacity()
+        up.append(
+            [
+                SheetHeadings.PROJECT,
+                SheetHeadings.MAX_NUMBER_OF_STUDENTS,
+                SheetHeadings.N_STUDENTS_ALLOCATED,
+                SheetHeadings.SUPERVISOR,
+            ]
+        )
+        for unalloc_proj in unalloc_projects:
+            up.append(
+                [
+                    unalloc_proj.title,
+                    unalloc_proj.max_n_students,
+                    self.n_students_allocated_to_project(unalloc_proj),
+                    unalloc_proj.supervisor_name(),
+                ]
+            )
+        bold_first_row(up)
+
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         # Software, settings, and summary information
         # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
         zs = wb.create_sheet(SheetNames.INFORMATION)
-        is_stable, instability_reason = self.stability()
+        is_stable, instability_reasons = self.stability()
+        assert len(instability_reasons) >= 1
         zs_rows = [
             ["SOFTWARE DETAILS"],
             [],
@@ -625,8 +699,10 @@ class Solution:
             ],
             [],
             ["Stable marriages?", str(is_stable)],
-            ["If unstable, reason:", instability_reason],
+            ["If unstable, reason(s):", instability_reasons[0]],
         ]
+        for extra_instability_reason in instability_reasons[1:]:
+            zs_rows.append(["", extra_instability_reason])
         for row in zs_rows:
             zs.append(row)
         autosize_openpyxl_column(zs, 0)
@@ -641,6 +717,7 @@ class Solution:
         # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         # Problem definition
         # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
         self.problem.write_to_xlsx_workbook(wb, with_internal_prefs=True)
 
         wb.save(filename)

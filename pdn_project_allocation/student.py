@@ -106,6 +106,9 @@ class Student:
             raise ValueError(
                 f"Error processing preferences for student: {name!r}: {exc}"
             )
+        self.original_order = -1
+        # ... we'll shuffle at some point but this is used to keep the
+        # original; written later.
 
     def __str__(self) -> str:
         """

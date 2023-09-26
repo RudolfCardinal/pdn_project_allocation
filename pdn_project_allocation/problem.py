@@ -137,6 +137,10 @@ class Problem:
         self.eligibility = eligibility or Eligibility(students, projects)
         self.eligibility.assert_valid()
         # Fix the order:
+        for i, p in enumerate(self.projects):
+            p.original_order = i
+        for i, s in enumerate(self.students):
+            s.original_order = i
         if not config.no_shuffle:
             self.students.sort()
             random.shuffle(self.students)
@@ -896,6 +900,12 @@ class Problem:
             ),
         )
         # Read eligibility
+        if config.student_must_have_choice:
+            log.warning(
+                f"Using option {Switches.STUDENT_MUST_HAVE_CHOICE}; "
+                f"eligibility will be set to 'no' for all projects that a "
+                f"student did not explicitly choose"
+            )
         errors_so_far = []  # type: List[str]
         for pcol, project in enumerate(projects, start=2):
             for srow, student in enumerate(students, start=2):
