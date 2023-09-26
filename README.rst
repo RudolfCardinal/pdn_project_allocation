@@ -496,6 +496,8 @@ Changelog
 
   - Report more spreadsheet errors before stopping, to aid users.
   - Some related error-checking improvements.
+  - Allow "blank" cells at the end of input spreadsheet rows (by truncating to
+    the correct length); saves much manual effort.
   - Improved explanatory output, including
 
     - explicitly showing students not allocated projects they asked for (+/-
