@@ -88,10 +88,16 @@ def convert_rank_notation(
         fractional = []
         prefcount = Counter(preferences)
         for x in preferences:
-            if not isinstance(x, int) or not 1 <= x <= n:
+            if not isinstance(x, int):
                 raise ValueError(
-                    f"Bad {RankNotation.COMPETITION} preferences: "
-                    f"{preferences!r}"
+                    f"Bad {RankNotation.COMPETITION} preferences in "
+                    f"{preferences!r}: {x!r} is not integer"
+                )
+            if not 1 <= x <= n:
+                raise ValueError(
+                    f"Bad {RankNotation.COMPETITION} preferences "
+                    f"in {preferences!r}: 1 <= x <= {n} "
+                    f"is not true for x = {x!r}"
                 )
             c = prefcount[x]
             # If there are three "1"s, then they should each have the value
@@ -104,9 +110,16 @@ def convert_rank_notation(
         prefcount = Counter(preferences)
         highest_permitted = len(prefcount)
         for x in preferences:
-            if not isinstance(x, int) or not 1 <= x <= highest_permitted:
+            if not isinstance(x, int):
                 raise ValueError(
-                    f"Bad {RankNotation.DENSE} preferences: {preferences!r}"
+                    f"Bad {RankNotation.DENSE} preferences in "
+                    f"{preferences!r}: {x!r} is not integer"
+                )
+            if not 1 <= x <= highest_permitted:
+                raise ValueError(
+                    f"Bad {RankNotation.DENSE} preferences "
+                    f"in {preferences!r}: 1 <= x <= {highest_permitted} "
+                    f"is not true for x = {x!r}"
                 )
             c = prefcount[x]
             n_below = sum(
@@ -499,8 +512,8 @@ class Preferences:
             preference = self.preference(item)
             options.append((item, preference, i))
         return [
-            t[0]  # the item
-            for t in sorted(options, key=operator.itemgetter(1, 2))
+            t[0]
+            for t in sorted(options, key=operator.itemgetter(1, 2))  # the item
         ]
         # ... sort by ascending dissatisfaction score (= descending
         # preference), then ascending sequence order

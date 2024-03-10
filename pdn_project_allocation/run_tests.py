@@ -102,6 +102,16 @@ def main() -> None:
         "test_out9.xlsx",
         ["--debug_model", "--no_shuffle"],
     )
+    process(
+        "test10_n10_multiple_ties_dense.xlsx",
+        "test_out10.xlsx",
+        [
+            "--allow_student_preference_ties",
+            "--allow_supervisor_preference_ties",
+            "--input_rank_notation",
+            "dense",
+        ],
+    )
 
 
 if __name__ == "__main__":

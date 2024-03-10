@@ -678,9 +678,11 @@ class Problem:
                 try:
                     pref = cls.get_pref_val(pref_contents)  # may raise
                     if config.allow_student_preference_ties:
-                        pref_ok = pref is None or isinstance(pref, float)
+                        # Float permitted here. But integers also permitted.
+                        pref_ok = isinstance(pref, (type(None), int, float))
                     else:
-                        pref_ok = pref is None or isinstance(pref, int)
+                        # Float not OK here.
+                        pref_ok = isinstance(pref, (type(None), int))
                     if not pref_ok:
                         raise ValueError
                 except ValueError:
