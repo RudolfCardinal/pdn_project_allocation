@@ -516,3 +516,9 @@ Changelog
     (why not let them rank more?), students prefer projects by supervisors they
     did prefer to other projects ("same supervisor, another project"). This is
     the ``--assume_supervisor_affinity`` option.
+
+- 2024-03-10, v1.6.1:
+
+  - Fix bug where int not accepted as preference in contexts allowing floats;
+    new test 10 demonstrating this, with thanks to Etienne Borde (Etienne13);
+    https://github.com/RudolfCardinal/pdn_project_allocation/issues/7.

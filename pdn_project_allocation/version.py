@@ -28,5 +28,5 @@ Version constants. (No non-stdlib imports here; used by setup.py.)
 
 """
 
-VERSION = "1.6.0"
-VERSION_DATE = "2023-09-25"
+VERSION = "1.6.1"
+VERSION_DATE = "2024-03-10"
