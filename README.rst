@@ -128,9 +128,9 @@ Explanation of how this program works
   dissatisfaction scores: if I rank something as #1, and something else as #2,
   I am happiest when I get my lowest score.
 
-- If I am a student and there are 20 projects, I have an allowance of 1 + 2 + 3
-  + ... + 20 = 210 dissatisfaction points. My course administrator might allow
-  me to rank all 20 projects.
+- If I am a student and there are 20 projects, I have an allowance of
+  1 + 2 + 3 + ... + 20 = 210 dissatisfaction points. My course administrator
+  might allow me to rank all 20 projects.
 
 - Alternatively, I might choose to rank only 5 (or the course administrator
   might permit only this). In that case, I will have "used" up scores 1, 2, 3,
@@ -500,8 +500,8 @@ Changelog
     the correct length); saves much manual effort.
   - Improved explanatory output, including
 
-    - explicitly showing students not allocated projects they asked for (+/-
-      supervisors likewise as a potential fallback);
+    - explicitly showing students not allocated projects they asked for
+      (+/- supervisors likewise as a potential fallback);
     - numbers allocated to supervisors;
     - project "popularity" rankings;
     - students who asked for projects they were ineligible for;
@@ -525,6 +525,6 @@ Changelog
 
 - 2024-05-19, v1.6.2:
 
-  - Bugfix as per
+  - Bugfix for when reading output with Excel, as per
     https://github.com/RudolfCardinal/pdn_project_allocation/pull/9, with
-    thanks to Nicolas Gold!
+    thanks to Nicolas Gold (NicolasGold)!
