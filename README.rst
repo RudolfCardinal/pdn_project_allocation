@@ -522,3 +522,9 @@ Changelog
   - Fix bug where int not accepted as preference in contexts allowing floats;
     new test 10 demonstrating this, with thanks to Etienne Borde (Etienne13);
     https://github.com/RudolfCardinal/pdn_project_allocation/issues/7.
+
+- 2024-05-19, v1.6.2:
+
+  - Bugfix as per
+    https://github.com/RudolfCardinal/pdn_project_allocation/pull/9, with
+    thanks to Nicolas Gold!
