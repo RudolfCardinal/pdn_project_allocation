@@ -75,7 +75,7 @@ class SheetNames:
     SUPERVISOR_PREFERENCES = "Supervisor_preferences"  # input, output
     SUPERVISOR_PREFERENCES_INTERNAL = "Supervisor_preferences_internal"  # out
     SUPERVISORS = "Supervisors"  # input, output
-    UNALLOCATED_PROJECTS_WITH_CAPACITY = "Unallocated_projects_with_capacity"
+    UNALLOCATED_PROJECTS_WITH_CAPACITY = "Unalloc_projects_with_capacity"
 
 
 class SheetHeadings:
