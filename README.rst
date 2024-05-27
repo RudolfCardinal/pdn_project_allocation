@@ -529,3 +529,8 @@ Changelog
   - Bugfix for when reading output with Excel, as per
     https://github.com/RudolfCardinal/pdn_project_allocation/pull/9, with
     thanks to Nicolas Gold (NicolasGold)!
+
+- 2024-05-27:
+
+  - No version change but Windows packaging/guide by Nicolas Gold:
+    https://github.com/RudolfCardinal/pdn_project_allocation/pull/10.

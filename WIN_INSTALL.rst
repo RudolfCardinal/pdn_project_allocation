@@ -28,17 +28,28 @@
 Windows Installation Guide
 ==========================
 
-This software can be installed on Windows using the instructions in the ``README.rst``
-file but some additional software (e.g. git) may need to be installed.  The instructions below are designed to help those with less experience who wish to deploy it on Windows without these additional installations.  These instructions avoid the need to install
-anything other than Python and this software itself.
+This software can be installed on Windows using the instructions in the
+``README.rst`` file but some additional software (e.g. git) may need to be
+installed.  The instructions below are designed to help those with less
+experience who wish to deploy it on Windows without these additional
+installations.  These instructions avoid the need to install anything other than
+Python and this software itself.
 
-You will need to work with the command line in Windows.  If you are unfamiliar with this, you can find various introductions on the web (for example: https://www.makeuseof.com/tag/a-beginners-guide-to-the-windows-command-line/)
+You will need to work with the command line in Windows.  If you are unfamiliar
+with this, you can find various introductions on the web (for example:
+https://www.makeuseof.com/tag/a-beginners-guide-to-the-windows-command-line/)
 
 Installation
 ------------
-- If you don't already have it installed, download and install Python (https://www.python.org/downloads/windows/).  You can use any version between 3.8 and 3.11.9 inclusive (the latter is near the top of the page).  Get the correct installer for your system (this is probably the Windows installer 64-bit file if you are running Windows 10 or 11).  Please note that Python 3.12.x is not currently compatible with this software.
 
-- Open a Windows command prompt (type `cmd.exe` in the Windows search box)
+- If you don't already have it installed, download and install Python
+  (https://www.python.org/downloads/windows/). You can use any version between
+  3.8 and 3.11.9 inclusive (the latter is near the top of the page). Get the
+  correct installer for your system (this is probably the Windows installer
+  64-bit file if you are running Windows 10 or 11).  Please note that Python
+  3.12.x is not currently compatible with this software.
+
+- Open a Windows command prompt (type `cmd.exe` in the Windows search box).
 
 - Create a directory in which you wish to install the software e.g.:
 
@@ -86,4 +97,8 @@ stash some output files and run
 This produces solutions to match the test data in the
 ``pdn_project_allocation/testdata`` directory.
 
-Don't forget that to use the software the virtual environment must have been activated.  If you close your command prompt and come back another time to use it again, just use the activation command shown above (``pdn_venv\Scripts\activate``), in the directory in which you installed the software.
+Don't forget that to use the software the virtual environment must have been
+activated. If you close your command prompt and come back another time to use it
+again, just use the activation command shown above
+(``pdn_venv\Scripts\activate``), in the directory in which you installed the
+software.
