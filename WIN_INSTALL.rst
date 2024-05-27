@@ -25,7 +25,6 @@
     :target: https://github.com/psf/black
 
 
-:ref: wininst
 Windows Installation Guide
 ==========================
 
