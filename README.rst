@@ -66,6 +66,7 @@ stash some output files and run
 This produces solutions to match the test data in the
 ``pdn_project_allocation/testdata`` directory.
 
+For a Windows installation guide please see the ``WIN_INSTALL.rst`` file.
 
 Description of the problem
 --------------------------

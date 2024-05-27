@@ -61,10 +61,10 @@ setup(
     # Requirements:
     install_requires=[
         "cardinal_pythonlib==1.1.23",
-        "mip==1.14.1",
+        "mip>=1.14.1",
         "matching==1.4",
         "openpyxl==3.0.10",
-        "lxml==4.9.1",  # Will speed up openpyxl export
+        "lxml==5.2.2",  # Will speed up openpyxl export
         "rich-argparse==0.5.0",  # colourful help
         "scipy==1.10.1",  # used by others, but also for rankdata
         # -------------------------------------------------------------------------
