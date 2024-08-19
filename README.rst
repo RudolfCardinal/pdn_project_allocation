@@ -534,3 +534,9 @@ Changelog
 
   - No version change but Windows packaging/guide by Nicolas Gold:
     https://github.com/RudolfCardinal/pdn_project_allocation/pull/10.
+
+- 2024-08-19:
+
+  - Dependency version constraints loosened per
+    https://github.com/RudolfCardinal/pdn_project_allocation/issues/11.
+    Relies on the semantic version promises of the dependencies.
