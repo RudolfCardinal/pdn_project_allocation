@@ -59,20 +59,26 @@ setup(
         "pdn_project_allocation.testdata": ["*"],
     },
     # Requirements:
+    python_requires=">= 3.8",
     install_requires=[
-        "cardinal_pythonlib==1.1.23",
-        "mip>=1.14.1",
-        "matching==1.4",
-        "openpyxl==3.0.10",
-        "lxml==5.2.2",  # Will speed up openpyxl export
-        "rich-argparse==0.5.0",  # colourful help
-        "scipy==1.10.1",  # used by others, but also for rankdata
+        # Versions: in general, ">= tested, < next_major_version".
+        # This relies on semantic versioning (https://semver.org/): until the
+        # major version changes, the public API must remain the same. (But
+        # after that it may not.)
+        # Syntax: https://peps.python.org/pep-0440/#version-specifiers
+        "cardinal_pythonlib >= 1.1.23, < 2",
+        "mip >= 1.14.1, < 2",
+        "matching >= 1.4",
+        "openpyxl >= 3.0.10, < 4",
+        "lxml >= 5.2.2, < 6",  # Will speed up openpyxl export
+        "rich-argparse >= 0.5.0",  # colourful help
+        "scipy >= 1.10.1, < 2",  # used by others, but also for rankdata
         # -------------------------------------------------------------------------
         # For development:
         # -------------------------------------------------------------------------
-        "black==24.3.0",  # auto code formatter
-        "flake8==3.8.3",  # code checks
-        "pytest==7.1.1",  # automatic testing
+        "black >= 24.3.0, < 25",  # auto code formatter
+        "flake8 >= 3.8.3, < 4",  # code checks
+        "pytest >= 7.1.1, < 8",  # automatic testing
     ],
     # Launch scripts:
     entry_points={

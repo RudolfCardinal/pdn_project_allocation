@@ -1267,9 +1267,13 @@ class Problem:
             # supervisors have capped the number of projects that they can
             # take). See below for explanation.
             project_in_use = [
-                m.add_var(f"project_in_use[p={p}]", var_type=BINARY)
-                if self.projects[p].at_least_one_supervisor_has_a_project_cap()
-                else None  # don't bother for supervisors that don't care
+                (
+                    m.add_var(f"project_in_use[p={p}]", var_type=BINARY)
+                    if self.projects[
+                        p
+                    ].at_least_one_supervisor_has_a_project_cap()
+                    else None
+                )  # don't bother for supervisors that don't care
                 for p in range(n_projects)
             ]  # indexed: p
         else:
