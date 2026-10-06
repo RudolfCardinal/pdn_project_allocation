@@ -535,8 +535,15 @@ Changelog
   - No version change but Windows packaging/guide by Nicolas Gold:
     https://github.com/RudolfCardinal/pdn_project_allocation/pull/10.
 
-- 2024-08-19:
+- 2024-08-19, v1.6.3:
 
   - Dependency version constraints loosened per
     https://github.com/RudolfCardinal/pdn_project_allocation/issues/11.
     Relies on the semantic version promises of the dependencies.
+
+- 2026-10-06, v1.6.4:
+
+  - Fix bug that crashed if ``using_max_projects_per_supervisor`` (or, in
+    spreadsheets, ``Max_number_of_projects``) was set and a student was
+    not eligible for a project, per
+    https://github.com/RudolfCardinal/pdn_project_allocation/issues/13.

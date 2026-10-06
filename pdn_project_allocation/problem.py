@@ -1369,10 +1369,11 @@ class Problem:
                         if not self.projects[p].is_supervised_by(supervisor):
                             continue
                         for s in range(n_students):
-                            m += (
-                                x[s][p] - project_in_use[p] <= 0,
-                                f"project_{p}_in_use_by_student_{s}",
-                            )
+                            if eligible[s][p]:  # if not, x[s][p] is None
+                                m += (
+                                    x[s][p] - project_in_use[p] <= 0,
+                                    f"project_{p}_in_use_by_student_{s}",
+                                )
                     # 2. Constrain the number of projects for the supervisor.
                     m += (
                         xsum(
@@ -1398,17 +1399,13 @@ class Problem:
                         for s in range(n_students)
                         for p in range(n_projects)
                         if (
+                            # don't consider impossible pairings
                             self.projects[p].is_supervised_by(supervisor)
-                            and eligible[s][
-                                p
-                            ]  # don't consider impossible pairings
+                            and eligible[s][p]
                         )
                     )
                     <= supervisor.max_n_students,
-                    (
-                        f"supervisor_{sv}_"
-                        f"max_{supervisor.max_n_students}_students"
-                    ),
+                    f"supervisor_{sv}_max_{supervisor.max_n_students}_students",  # noqa
                 )
         del sv, supervisor
 
